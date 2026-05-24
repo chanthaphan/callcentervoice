@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ffmpeg -i voice/creditcard_call_center_001.WAV -af \"pan=mono|c0=c0\" -t 30 /tmp/ch0_30.wav -y)",
+      "Bash(ffmpeg -i voice/creditcard_call_center_001.WAV -af \"pan=mono|c0=c1\" -t 30 /tmp/ch1_30.wav -y)",
+      "Bash(ffmpeg -i /tmp/ch0_30.wav -f s16le -ac 1 -ar 8000 /tmp/ch0.pcm -y)",
+      "Bash(ffmpeg -i /tmp/ch1_30.wav -f s16le -ac 1 -ar 8000 /tmp/ch1.pcm -y)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s http://127.0.0.1:8000/api/calls)"
+    ]
+  }
+}
