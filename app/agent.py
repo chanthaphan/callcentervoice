@@ -237,6 +237,7 @@ class PostCallAgent:
                 model=self.settings.openai_model,
                 api_key=self.settings.openai_api_key,
                 request_timeout=self.settings.llm_request_timeout_seconds,
+                max_retries=4,
                 **self._temperature_kwargs(self.settings.openai_model),
             )
         if provider == "azure_openai":
@@ -259,6 +260,7 @@ class PostCallAgent:
                 azure_deployment=self.settings.azure_openai_deployment,
                 api_version=self.settings.azure_openai_api_version,
                 request_timeout=self.settings.llm_request_timeout_seconds,
+                max_retries=4,
                 **self._temperature_kwargs(self.settings.azure_openai_deployment or self.settings.openai_model),
             )
         if provider == "anthropic":
@@ -271,6 +273,7 @@ class PostCallAgent:
                 api_key=self.settings.anthropic_api_key,
                 temperature=0,
                 timeout=self.settings.llm_request_timeout_seconds,
+                max_retries=4,
             )
         raise RuntimeError(f"Unsupported LLM_PROVIDER={self.settings.llm_provider}")
 

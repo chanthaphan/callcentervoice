@@ -37,7 +37,7 @@ if _config_overrides_path.exists():
 def _redact_stored_transcripts(call_store: CallStore) -> None:
     """Mask PII in already-stored transcripts. Idempotent — masked text has no
     digit runs left to match, so re-running on later boots is a no-op."""
-    for record in call_store.list():
+    for record in call_store.iter_records():
         if not record.transcript:
             continue
         redacted = redact_transcript(record.transcript)
@@ -128,14 +128,13 @@ def patch_config(payload: ConfigPatch):
 
 
 @app.get("/api/calls")
-def list_calls():
-    records = store.list()
-    result = []
-    for record in records:
-        data = record.model_dump(mode="json")
-        data["file_exists"] = Path(record.file_path).is_file()
-        result.append(data)
-    return result
+def list_calls(limit: int = 50, offset: int = 0, status: str | None = None):
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    items = store.list_summaries(limit=limit, offset=offset, status=status)
+    for item in items:
+        item["file_exists"] = Path(item["file_path"]).is_file()
+    return {"items": items, "total": store.count(status), "limit": limit, "offset": offset}
 
 
 @app.post("/api/calls/bulk")
@@ -175,7 +174,9 @@ def get_call(call_id: str):
     record = store.get(call_id)
     if not record:
         raise HTTPException(status_code=404, detail="Call not found")
-    return record
+    data = record.model_dump(mode="json")
+    data["file_exists"] = Path(record.file_path).is_file()
+    return data
 
 
 @app.get("/api/calls/{call_id}/audio")
