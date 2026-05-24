@@ -1,25 +1,25 @@
 # Call Center Voice Analysis
 
-FastAPI service that transcribes, diarizes, and analyzes recorded call center audio. Drop audio files into a folder, and the service produces a structured post-call report — sentiment, emotion journey, critical flags, credit card products, risks, and next actions — viewable in a browser UI.
+A FastAPI service that transcribes, diarizes, and analyzes recorded call-center audio. Drop audio files into a folder (or point it at one) and it produces a structured post-call report — speaker-separated transcript, sentiment, emotion journey, critical flags, credit-card products, risks, and next actions — viewable in a browser UI or generated headless for large batches.
 
-## Features
+Built for a Thai bank's call-center QA, but provider-agnostic and language-agnostic.
 
-- **Batch processing** — watches a folder and processes all audio files automatically on startup
-- **Parallel execution** — configurable concurrency via `MAX_PARALLEL_FILES`
-- **Live progress** — UI shows per-file stage (transcribing → analyzing → complete) with segment count updates
-- **Three transcription providers** — `mock`, `openai` (Whisper batch), `openai_realtime` (streaming WebSocket)
-- **Three LLM analysis providers** — `mock`, `openai`, `azure_openai`, `anthropic`
-- **Broad audio support** — native WAV/MP3/M4A/OGG/WebM; other formats auto-converted via ffmpeg
-- **Speaker diarization** — alternating or channel-based strategies; LLM classifies speakers as customer / staff
-- **Download** — export any call as a plain-text report
-- **In-memory record cache** — fast API reads regardless of the number of stored calls
+## Highlights
+
+- **Multiple transcription backends** — `mock`, OpenAI/Azure OpenAI batch (Whisper, GPT-4o-transcribe, GPT-4o-transcribe-diarize), OpenAI Realtime (streaming), and **Azure AI Speech Fast Transcription** with diarization.
+- **LLM analysis** — `mock`, OpenAI, Azure OpenAI, or Anthropic. Produces a strict structured report and assigns speaker roles (customer vs. call-center staff), even for named speakers.
+- **Two ways to run** — a browser UI for review, and a **headless batch CLI** for unattended bulk processing (designed for 10k+ files).
+- **Recursive discovery** — scans nested folders (e.g. date folders `voice/2026-05-01/…`) and keeps the subpath in the display name.
+- **PII redaction** — masks ID/phone/card numbers in stored transcripts; optional Azure AI Language enrichment adds name-level PII redaction, per-utterance sentiment, and summarization.
+- **Resilient & scalable** — SQLite store (no full in-memory load), exponential-backoff retries on throttling/timeouts, resumable processing, configurable concurrency.
+- **Runtime config** — change providers/models/options from the Settings panel (or `PATCH /api/config`) without editing files.
 
 ## Requirements
 
 - Python 3.11+
-- [ffmpeg](https://ffmpeg.org/) — required for non-WAV formats and realtime PCM conversion
+- [ffmpeg](https://ffmpeg.org/) — required for non-WAV formats, oversized-file chunking, and realtime PCM conversion.
 
-## Quick Start
+## Quick start
 
 ```bash
 python3 -m venv .venv
@@ -29,154 +29,130 @@ cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000`. The default `.env.example` uses `mock` providers — no API keys needed. Put audio files in `voice/` and click **Process**.
+Open `http://127.0.0.1:8000`. The defaults use `mock` providers — no API keys needed. Put audio in `voice/`, click **Refresh** to list them, then **▶ Start** (or **Process** for the whole folder).
+
+To use real providers, edit `.env` (see [docs/CONFIGURATION.md](docs/CONFIGURATION.md)) and restart.
+
+## Running
+
+### Web UI
+
+`uvicorn app.main:app --reload` (add `--host 0.0.0.0 --port 8000` to expose it). The UI lists sessions (paginated), shows a live processing stage strip, an audio timeline with speaker lanes, the speaker-separated transcript, profiles, sentiment/flags, and an emotion journey. A gear icon opens provider-aware Settings.
+
+### Headless batch (no UI)
+
+For bulk/unattended runs — e.g. 10,000+ recordings organized in date folders:
+
+```bash
+python -m app.batch /path/to/recordings --workers 8
+```
+
+| Flag | Purpose |
+|---|---|
+| `folder` | Folder to scan recursively (default: `WATCH_FOLDER`). |
+| `--workers N` | Parallel workers (overrides `MAX_PARALLEL_FILES`). |
+| `--reprocess` | Re-transcribe **and** re-analyze even if complete. |
+| `--reanalyze` | Re-run analysis on the existing transcript only. |
+| `--poll SECONDS` | Progress-report interval (default 5). |
+
+It reuses the same config and store as the web app, logs progress + a final tally, **skips already-completed files** (resumable), and on `Ctrl+C` cancels queued files while letting in-flight ones finish. See [docs/BATCH.md](docs/BATCH.md).
+
+## How it works
+
+```
+audio file ─▶ transcribe ─▶ diarize ─▶ analyze ─▶ [Azure Language] ─▶ redact PII ─▶ store
+              (ASR)         (LLM)      (LLM, structured)  (optional)   (numbers)    (SQLite)
+```
+
+Each file flows through stages `queued → transcribing → diarizing → analyzing → enriching → complete` (or `failed`). The `BatchProcessor` runs files concurrently in a thread pool. Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Configuration
 
-All settings are read from `.env`. Every value has a default and the service starts without any key set.
+All settings come from `.env` (each has a default; the service starts with no keys set). A subset is also editable at runtime from the Settings panel / `PATCH /api/config` (persisted to `data/config_overrides.json`).
 
-### Server
-
-| Variable | Default | Description |
-|---|---|---|
-| `APP_HOST` | `127.0.0.1` | Bind address |
-| `APP_PORT` | `8000` | Port |
-| `WATCH_FOLDER` | `voice` | Folder scanned for audio files |
-| `DATA_DIR` | `data` | Where call JSON records are stored |
-| `MAX_PARALLEL_FILES` | `3` | Concurrent transcription jobs (1–16) |
-| `AUTO_PROCESS_ON_START` | `true` | Scan and process on startup |
-| `SCAN_INTERVAL_SECONDS` | `30` | Re-scan interval when auto-process is on |
-
-### Transcription
+The most common knobs:
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRANSCRIBE_PROVIDER` | `mock` | `mock`, `openai`, or `openai_realtime` |
-| `OPENAI_API_KEY` | — | Required for `openai` and `openai_realtime` |
-| `OPENAI_TRANSCRIBE_MODEL` | `whisper-1` | Model for the `openai` batch provider |
-| `OPENAI_TRANSCRIBE_LANGUAGE` | `auto` | ISO 639-1 code, or `auto` to detect |
-| `OPENAI_REQUEST_TIMEOUT_SECONDS` | `600` | Batch transcription timeout |
-| `AUDIO_TRANSCODE_BITRATE` | `64k` | ffmpeg bitrate when converting to MP3 |
-| `LOCAL_DIARIZATION_STRATEGY` | `alternating` | `alternating`, `channel`, or `none` |
-| `OPENAI_CHUNKING_STRATEGY` | `auto` | Chunking hint for diarization models |
+| `TRANSCRIBE_PROVIDER` | `mock` | `mock`, `openai`, `openai_realtime`, `azure_speech` |
+| `LLM_PROVIDER` | `mock` | `mock`, `openai`, `azure_openai`, `anthropic` |
+| `WATCH_FOLDER` | `voice` | Folder scanned for audio (recursive) |
+| `MAX_PARALLEL_FILES` | `3` | Concurrent jobs (1–16) |
+| `AUTO_PROCESS_ON_START` | `true` | Auto-process discovered files; if `false`, files appear as *pending* until started |
+| `ANALYSIS_LANGUAGE` | `Thai` | Language for free-text output |
+| `APP_API_KEY` | — | Optional shared secret guarding `/api/*` (see Security) |
 
-#### Realtime provider
+**Full reference for every variable** (server, transcription, Azure Speech, LLM, Azure Language): **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**.
 
-| Variable | Default | Description |
-|---|---|---|
-| `OPENAI_REALTIME_TRANSCRIBE_MODEL` | `gpt-realtime-whisper` | Realtime model name |
-| `OPENAI_REALTIME_TRANSCRIPTION_DELAY` | `minimal` | Latency hint |
-| `REALTIME_SAMPLE_RATE` | `24000` | PCM sample rate sent to the WebSocket |
-| `REALTIME_CHUNK_SECONDS` | `5` | Size of each audio chunk in seconds |
-| `REALTIME_CHUNK_TIMEOUT_SECONDS` | `60` | Per-chunk response timeout |
-| `REALTIME_PARTIAL_UPDATE_EVERY_SEGMENTS` | `3` | How often to push partial transcript updates |
+### Transcription providers (at a glance)
 
-### Analysis (LLM)
+- **`azure_speech`** — Azure AI Speech Fast Transcription. Best for Thai diarization. Set `AZURE_SPEECH_API_KEY`, `AZURE_SPEECH_ENDPOINT` (custom-domain `https://<resource>.cognitiveservices.azure.com/`), `AZURE_SPEECH_DIARIZATION=diarization`.
+- **`openai`** — OpenAI **or** Azure OpenAI batch. Supports `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe-diarize`. Route to Azure by setting `AZURE_OPENAI_TRANSCRIBE_ENDPOINT` + `AZURE_OPENAI_API_KEY`.
+- **`openai_realtime`** — streaming WebSocket; useful for live progress and channel-split telephony.
+- **`mock`** — fake transcript for local testing.
 
-| Variable | Default | Description |
-|---|---|---|
-| `LLM_PROVIDER` | `mock` | `mock`, `openai`, `azure_openai`, or `anthropic` |
-| `ANALYSIS_LANGUAGE` | `Thai` | Language for all free-text output fields |
-| `LLM_REQUEST_TIMEOUT_SECONDS` | `300` | LLM call timeout |
-| `OPENAI_MODEL` | `gpt-4.1-mini` | Model for `openai` provider |
-| `AZURE_OPENAI_API_KEY` | — | Azure credential |
-| `AZURE_OPENAI_ENDPOINT` | — | Azure resource endpoint |
-| `AZURE_OPENAI_DEPLOYMENT` | — | Azure deployment name |
-| `AZURE_OPENAI_API_VERSION` | `2024-12-01-preview` | Azure API version |
-| `ANTHROPIC_API_KEY` | — | Anthropic credential |
-| `ANTHROPIC_MODEL` | `claude-3-5-sonnet-latest` | Model for `anthropic` provider |
+> Note: `gpt-4o-transcribe`/`-mini-transcribe` return a single text block (no timestamps), so speaker separation is weak — prefer `whisper-1`, `gpt-4o-transcribe-diarize`, or `azure_speech` for diarized calls.
 
-## Transcription Providers
+### PII redaction
 
-### `openai` — Whisper batch (fast, simple)
-
-```env
-TRANSCRIBE_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-OPENAI_TRANSCRIBE_MODEL=whisper-1
-OPENAI_TRANSCRIBE_LANGUAGE=th
-LOCAL_DIARIZATION_STRATEGY=alternating
-```
-
-Uploads the file in one request and receives timestamped segments. Speaker labels are assigned by the `LOCAL_DIARIZATION_STRATEGY`. For built-in diarization, switch to a diarization model:
-
-```env
-OPENAI_TRANSCRIBE_MODEL=gpt-4o-transcribe-diarize
-OPENAI_CHUNKING_STRATEGY=auto
-```
-
-### `openai_realtime` — Streaming WebSocket (live progress)
-
-```env
-TRANSCRIBE_PROVIDER=openai_realtime
-OPENAI_API_KEY=sk-...
-OPENAI_REALTIME_TRANSCRIBE_MODEL=gpt-realtime-whisper
-OPENAI_TRANSCRIBE_LANGUAGE=th
-REALTIME_CHUNK_SECONDS=5
-LOCAL_DIARIZATION_STRATEGY=alternating
-```
-
-Converts audio to PCM16 with ffmpeg and streams it through the OpenAI Realtime WebSocket in fixed-size chunks. Each chunk becomes a timestamped segment. If the file has two channels and `LOCAL_DIARIZATION_STRATEGY=channel`, the channels are transcribed in parallel and merged — useful when the call center telephony splits agent and customer onto separate channels.
-
-## LLM Analysis Providers
-
-### OpenAI
-
-```env
-LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4.1-mini
-```
-
-### Azure OpenAI
-
-```env
-LLM_PROVIDER=azure_openai
-AZURE_OPENAI_API_KEY=...
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT=your-deployment-name
-AZURE_OPENAI_API_VERSION=2024-12-01-preview
-```
-
-### Anthropic
-
-```env
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-haiku-4-5-20251001
-```
-
-Use `claude-haiku-4-5-20251001` for maximum throughput on high-volume batches. Switch to `claude-sonnet-4-6` when output quality matters more than speed.
+Local redaction always masks 9+ digit runs (Thai national IDs, phone, card/account numbers → `[ปกปิด]`) in stored transcripts. For **name-level** PII plus per-utterance sentiment and summarization, enable Azure AI Language (`AZURE_LANGUAGE_ENABLED=true` + a Language resource). Details in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## API
 
+Summary below; full reference with examples: **[docs/API.md](docs/API.md)**.
+
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/calls` | List all call records |
-| `GET` | `/api/calls/{id}` | Get one call record |
-| `GET` | `/api/calls/{id}/audio` | Stream the original audio file |
-| `GET` | `/api/calls/{id}/download.txt` | Download transcript + analysis as plain text |
-| `POST` | `/api/process-folder` | Queue all audio files in a folder |
-| `POST` | `/api/calls/{id}/reprocess` | Re-run transcription and analysis for one call |
+| `GET` | `/api/calls?limit&offset&status` | Paginated list of lightweight summaries `{items, total, …}` |
+| `GET` | `/api/calls/{id}` | One full record (transcript + analysis) |
+| `GET` | `/api/calls/{id}/audio` | Stream the original audio |
+| `GET` | `/api/calls/{id}/download.txt` | Text report (named after the audio file) |
+| `POST` | `/api/process-folder` | Scan a folder and process (`{folder?, force?, reanalyze?}`) |
+| `POST` | `/api/discover-folder` | Scan a folder and add files as *pending* (no processing) |
+| `POST` | `/api/calls/{id}/start` · `/reprocess` · `/reanalyze` | Single-call actions |
+| `POST` | `/api/calls/bulk` | Bulk `start` / `reanalyze` / `reprocess` / `delete` |
+| `DELETE` | `/api/calls/{id}` | Delete a record |
+| `GET`/`PATCH` | `/api/config` | Read / update runtime-configurable settings |
 
-### Process a folder
+## Security
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/process-folder \
-  -H "Content-Type: application/json" \
-  -d '{"force": true}'
+By default the app binds to `127.0.0.1` (local only). If you expose it (`--host 0.0.0.0`), set `APP_API_KEY`: every `/api/*` request must then send it via the `X-API-Key` header (the UI prompts once and remembers it) or an `?api_key=` query param (used for audio/download links). The UI shell and static assets stay open so the page can load and prompt.
+
+## Storage
+
+Records live in a SQLite database at `DATA_DIR/calls.db` (WAL mode), read lazily by id — so it scales to large datasets without loading everything into memory. On first run it auto-imports any legacy `DATA_DIR/calls/*.json` files. `DATA_DIR` and the audio in `voice/` are gitignored.
+
+## Project layout
+
+```
+app/
+  main.py        FastAPI app, routes, API-key guard, startup
+  batch.py       Headless CLI (python -m app.batch)
+  processor.py   BatchProcessor — discovery, queue, per-file pipeline
+  audio.py       TranscriptionService — mock/openai/realtime/azure_speech
+  agent.py       PostCallAgent — LLM diarization + structured analysis
+  language.py    AzureLanguageService — optional enrichment
+  enrichment.py  Maps roles/sentiment onto transcript segments
+  redaction.py   Local number-PII masking
+  retry.py       Exponential-backoff helper
+  storage.py     SQLite CallStore
+  models.py      Pydantic models
+  config.py      Settings + runtime override handling
+  static/index.html   Single-file browser UI
+docs/            Architecture, configuration, API, and batch guides
+tests/           Pytest suite
 ```
 
-`force: true` reprocesses files that are already complete. Omit `folder` to use the configured `WATCH_FOLDER`.
-
-### Reprocess one call
+## Testing
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/calls/{call_id}/reprocess
+pytest -q
 ```
 
-## Supported Audio Formats
+## Supported audio formats
 
 Direct upload (no conversion): `.flac` `.m4a` `.mp3` `.mp4` `.mpeg` `.mpga` `.ogg` `.wav` `.webm`
 
 Auto-converted to MP3 via ffmpeg: `.3g2` `.3gp` `.aac` `.aif` `.aiff` `.amr` `.au` `.caf` `.m4b` `.m4p` `.m4r` `.mka` `.mkv` `.mov` `.mp2` `.mpg` `.oga` `.ogv` `.opus` `.wma`
+
+Files over 25 MB are automatically chunked (10-minute segments) for the OpenAI batch provider.

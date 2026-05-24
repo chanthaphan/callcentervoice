@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from app.config import Settings
 from app.models import Sentiment, ToneFlag, TranscriptResult, TranscriptSegment
+from app.retry import retry_request
 
 
 WHISPER_SIZE_LIMIT = 25 * 1024 * 1024  # 25 MB — OpenAI hard limit
@@ -111,8 +112,11 @@ class TranscriptionService:
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=self.settings.openai_request_timeout_seconds) as resp:
-                payload = json.loads(resp.read())
+            def _send():
+                with urllib.request.urlopen(req, timeout=self.settings.openai_request_timeout_seconds) as resp:
+                    return json.loads(resp.read())
+
+            payload = retry_request(_send, label="Azure Speech transcription")
         finally:
             if temporary_path and temporary_path.exists():
                 temporary_path.unlink()

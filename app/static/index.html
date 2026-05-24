@@ -97,6 +97,8 @@
 
     /* Scrollable calls list */
     .sb-list { flex: 1; overflow-y: auto; }
+    .load-more-btn { width: 100%; padding: 10px; border: 0; border-top: 1px solid var(--line); background: var(--panel); color: var(--agent); font-size: 12px; font-weight: 700; cursor: pointer; }
+    .load-more-btn:hover { background: var(--agent-soft); }
 
     /* ── Call rows ── */
     .call-row-wrap {
@@ -610,7 +612,10 @@
   const detailEl    = document.querySelector("#detail");
   const folderEl    = document.querySelector("#folder");
 
-  let calls = [];
+  let calls = [];          // lightweight summaries for the loaded window
+  let total = 0;           // total record count on the server
+  const pageSize = 50;
+  const callDetails = {};  // id -> full record (transcript + analysis), fetched on demand
   let selectedId = null;
   let currentTime = 0;
   let selectedRenderKey = null;
@@ -654,12 +659,61 @@
 
   // ── Data loading ──────────────────────────────────────────
 
+  async function fetchPage(offset, limit) {
+    const res = await fetch(`/api/calls?limit=${limit}&offset=${offset}`);
+    return res.json(); // { items, total, limit, offset }
+  }
+
+  // Initial / full reload of the first page.
   async function loadCalls() {
-    const res = await fetch("/api/calls");
-    calls = await res.json();
+    const data = await fetchPage(0, pageSize);
+    calls = data.items; total = data.total;
     if (!selectedId && calls.length) selectedId = calls[0].id;
     renderSidebar();
-    renderDetail();
+    await renderDetail();
+  }
+
+  // Refresh the currently-loaded window in place (preserves "Load more" pages).
+  async function refreshCalls() {
+    const data = await fetchPage(0, Math.max(pageSize, calls.length));
+    calls = data.items; total = data.total;
+    renderSidebar();
+  }
+
+  async function loadMore() {
+    const data = await fetchPage(calls.length, pageSize);
+    calls = calls.concat(data.items); total = data.total;
+    renderSidebar();
+  }
+
+  // Full record (transcript + analysis) for the detail view, cached by id.
+  async function fetchDetail(id, force = false) {
+    if (!force && callDetails[id]) return callDetails[id];
+    const res = await fetch(`/api/calls/${id}`);
+    if (!res.ok) return null;
+    callDetails[id] = await res.json();
+    return callDetails[id];
+  }
+
+  // Refresh the list, plus the open detail if its status changed or it's still working.
+  async function pollUpdates() {
+    await refreshCalls();
+    if (!selectedId) return;
+    const summary = calls.find((c) => c.id === selectedId);
+    const cached = callDetails[selectedId];
+    const working = summary && (summary.status === "processing" || summary.status === "queued");
+    const changed = summary && cached && summary.updated_at !== cached.updated_at;
+    if (working || changed) {
+      await fetchDetail(selectedId, true);
+      await renderDetail();
+    }
+  }
+
+  // Refresh the list + the open detail after an action that changed records.
+  async function afterMutation(detailId = null) {
+    await refreshCalls();
+    if (detailId) await fetchDetail(detailId, true);
+    await renderDetail();
   }
 
   async function loadConfig() {
@@ -673,17 +727,17 @@
 
   function renderSidebar() {
     const sorted = sortedCalls();
-    sbCountEl.textContent = `(${sorted.length})`;
+    sbCountEl.textContent = `(${total})`;
 
     if (selectionMode) {
       sbSelCountEl.textContent = `${selectedIds.size} selected`;
       sbBulkEl.classList.toggle("visible", selectedIds.size > 0);
     }
 
-    callsListEl.innerHTML = sorted.map((call) => {
+    const rows = sorted.map((call) => {
       const missing = call.file_exists === false;
       const isPending = call.status === "pending";
-      const topic = call.analysis?.session_topic || "";
+      const topic = call.session_topic || "";
       const checked = selectedIds.has(call.id) ? "checked" : "";
       const actionBtn = isPending
         ? `<button class="row-start-btn" data-id="${call.id}" title="Start processing">▶</button>`
@@ -703,7 +757,11 @@
           </button>
           ${actionBtn}
         </div>`;
-    }).join("");
+    });
+    if (calls.length < total) {
+      rows.push(`<button class="load-more-btn" id="loadMoreBtn">Load more (${calls.length} of ${total})</button>`);
+    }
+    callsListEl.innerHTML = rows.join("");
   }
 
   // ── Sidebar events ────────────────────────────────────────
@@ -763,6 +821,12 @@
 
   // Clicks inside the calls list (delegation)
   callsListEl.addEventListener("click", (e) => {
+    // Load more (pagination)
+    if (e.target.closest("#loadMoreBtn")) {
+      loadMore();
+      return;
+    }
+
     // Start button (pending rows)
     const startBtn = e.target.closest(".row-start-btn");
     if (startBtn) {
@@ -794,7 +858,7 @@
     selectedId = id;
     selectedRenderKey = null;
     renderSidebar();
-    renderDetail(true);
+    fetchDetail(id).then(() => renderDetail(true));
   });
 
   function toggleSelectItem(id) {
@@ -805,7 +869,7 @@
 
   async function startSingle(callId) {
     await fetch(`/api/calls/${callId}/start`, { method: "POST" });
-    await loadCalls();
+    await afterMutation(callId);
   }
 
   async function deleteSingle(callId) {
@@ -815,7 +879,8 @@
     await fetch(`/api/calls/${callId}`, { method: "DELETE" });
     if (selectedId === callId) { selectedId = null; selectedRenderKey = null; }
     selectedIds.delete(callId);
-    await loadCalls();
+    delete callDetails[callId];
+    await afterMutation();
   }
 
   async function bulkAction(action) {
@@ -842,17 +907,22 @@
     selectedIds.clear();
     sbBulkEl.classList.remove("visible");
     document.querySelector("#selBtn").style.display = "";
-    await loadCalls();
+    await afterMutation(selectedId);
   }
 
   // ── Detail rendering ──────────────────────────────────────
 
-  function renderDetail(force = false) {
-    const call = calls.find((c) => c.id === selectedId);
-    if (!call) {
+  async function renderDetail(force = false) {
+    if (!selectedId) {
       selectedRenderKey = null;
       detailEl.innerHTML = `<div class="empty">Select a session to view analysis</div>`;
       return;
+    }
+    let call = callDetails[selectedId];
+    if (!call) {
+      detailEl.innerHTML = `<div class="empty">Loading…</div>`;
+      call = await fetchDetail(selectedId);
+      if (!call || call.id !== selectedId) return; // selection changed while fetching
     }
     const existingPlayer = document.querySelector("#player");
     const sameSession = !!selectedRenderKey?.startsWith(`${call.id}:`);
@@ -1186,12 +1256,12 @@
 
   async function reanalyzeCall(callId) {
     await fetch(`/api/calls/${callId}/reanalyze`, { method: "POST" });
-    await loadCalls();
+    await afterMutation(callId);
   }
 
   async function reprocessCall(callId) {
     await fetch(`/api/calls/${callId}/reprocess`, { method: "POST" });
-    await loadCalls();
+    await afterMutation(callId);
   }
 
   function wirePlayback(duration, callId, restoreState = null) {
@@ -1251,7 +1321,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ folder: folderEl.value || "voice" }),
     });
-    await loadCalls();
+    await afterMutation(selectedId);
   });
 
   document.querySelector("#refresh").addEventListener("click", async () => {
@@ -1260,7 +1330,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ folder: folderEl.value || "voice" }),
     });
-    await loadCalls();
+    await afterMutation(selectedId);
   });
 
   // ── Settings modal ────────────────────────────────────────
@@ -1348,7 +1418,7 @@
 
   loadConfig();
   loadCalls();
-  setInterval(loadCalls, 5000);
+  setInterval(pollUpdates, 5000);
 </script>
 </body>
 </html>
