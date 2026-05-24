@@ -26,6 +26,48 @@ A FastAPI process serves a single-page UI and a REST API, and owns a `BatchProce
    enrichment.py maps roles + sentiment onto segments → CallStore.save()
 ```
 
+The same view as a rendered diagram (GitHub renders Mermaid). Solid arrows are
+in-process / data flow; dashed arrows are external API calls.
+
+```mermaid
+flowchart TB
+  subgraph clients["Entry points"]
+    UI["Browser UI<br/>single-page review app"]
+    CLI["Headless CLI<br/>python -m app.batch<br/>(10k+ files, resumable)"]
+  end
+
+  AUDIO[("Audio files<br/>recursive folder scan")]
+
+  subgraph app["FastAPI process"]
+    API["FastAPI app<br/>REST API + UI<br/>optional APP_API_KEY guard"]
+    BP["BatchProcessor<br/>thread pool · discovery · resumable"]
+    subgraph pipe["Per-file pipeline (worker thread)"]
+      direction LR
+      T["1 · Transcribe"] --> D["2 · Diarize"] --> AN["3 · Analyze"] --> EN["4 · Enrich<br/>(optional)"] --> RD["5 · Redact PII"] --> ST["6 · Store"]
+    end
+  end
+
+  DB[("SQLite store<br/>lazy reads · WAL")]
+
+  subgraph ext["External providers"]
+    ASR["Transcription<br/>Azure AI Speech (diarization)<br/>· OpenAI / Azure OpenAI<br/>· OpenAI Realtime"]
+    LLM["LLM analysis<br/>Azure OpenAI · OpenAI<br/>· Anthropic"]
+    LANG["Azure AI Language<br/>(optional enrichment)"]
+  end
+
+  UI -->|"HTTP /api/*"| API
+  CLI -->|"process_folder()"| BP
+  API -->|"enqueue / discover"| BP
+  AUDIO -->|"discover (stable call_id)"| BP
+  BP --> pipe
+  T -.->|"ASR"| ASR
+  D -.->|"LLM"| LLM
+  AN -.->|"LLM"| LLM
+  EN -.->|"opt"| LANG
+  ST --> DB
+  API <-->|"paginated summaries / full record"| DB
+```
+
 ## Components
 
 | Module | Responsibility |
