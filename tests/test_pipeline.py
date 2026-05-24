@@ -23,9 +23,10 @@ def test_mock_pipeline_processes_folder(tmp_path: Path) -> None:
     voice_dir = tmp_path / "voice"
     data_dir = tmp_path / "data"
     voice_dir.mkdir()
-    source = Path("voice/creditcard_call_center.WAV")
+    # Mock transcription ignores audio content, so a placeholder file is enough —
+    # keeps the test self-contained (no committed audio fixture required).
     target = voice_dir / "call.WAV"
-    target.write_bytes(source.read_bytes())
+    target.write_bytes(b"\x00" * 1024)
 
     settings = Settings(
         watch_folder=voice_dir,
