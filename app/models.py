@@ -130,5 +130,16 @@ class CallRecord(BaseModel):
     analysis: PostCallAnalysis | None = None
 
     @classmethod
-    def from_path(cls, path: Path, call_id: str) -> "CallRecord":
-        return cls(id=call_id, file_name=path.name, file_path=str(path.resolve()))
+    def from_path(cls, path: Path, call_id: str, root: Path | None = None) -> "CallRecord":
+        resolved = path.resolve()
+        name = resolved.name
+        # When discovered under a scanned root, keep the subfolder for context
+        # (e.g. date-organized folders → "2026-05-01/call.wav").
+        if root is not None:
+            try:
+                rel = resolved.relative_to(Path(root).resolve())
+                if len(rel.parts) > 1:
+                    name = rel.as_posix()
+            except ValueError:
+                pass
+        return cls(id=call_id, file_name=name, file_path=str(resolved))

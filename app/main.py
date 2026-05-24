@@ -17,6 +17,7 @@ from app.audio import TranscriptionService
 from app.config import CONFIGURABLE_FIELDS, apply_overrides, get_settings
 from app.language import AzureLanguageService
 from app.processor import BatchProcessor
+from app.redaction import redact_transcript
 from app.storage import CallStore
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,20 @@ if _config_overrides_path.exists():
     except (OSError, ValueError):
         logger.warning("Could not load config overrides from %s", _config_overrides_path, exc_info=True)
 
+def _redact_stored_transcripts(call_store: CallStore) -> None:
+    """Mask PII in already-stored transcripts. Idempotent — masked text has no
+    digit runs left to match, so re-running on later boots is a no-op."""
+    for record in call_store.list():
+        if not record.transcript:
+            continue
+        redacted = redact_transcript(record.transcript)
+        if redacted is not record.transcript:
+            record.transcript = redacted
+            call_store.save(record)
+
+
 store = CallStore(settings.absolute_data_dir())
+_redact_stored_transcripts(store)
 processor = BatchProcessor(
     store=store,
     transcription=TranscriptionService(settings),
@@ -235,8 +249,11 @@ def download_call_text(call_id: str) -> PlainTextResponse:
                 f"{segment.speaker} ({_value(segment.sentiment)}): {segment.text}"
             )
     content = "\n".join(lines).strip() + "\n"
-    filename = f"{Path(record.file_name).stem}.txt"
-    fallback_name = f"{record.id}.txt"
+    stem = Path(record.file_name).stem
+    filename = f"{stem}.txt"
+    # ASCII fallback (some browsers ignore filename*) — derive from the audio name, not the id
+    ascii_stem = "".join(c if c.isascii() and (c.isalnum() or c in "._-") else "_" for c in stem).strip("_")
+    fallback_name = f"{ascii_stem or record.id}.txt"
     disposition = f"attachment; filename=\"{fallback_name}\"; filename*=UTF-8''{quote(filename)}"
     return PlainTextResponse(
         content,

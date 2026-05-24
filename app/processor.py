@@ -9,6 +9,7 @@ from app.audio import SUPPORTED_AUDIO_EXTENSIONS, TranscriptionService
 from app.enrichment import enrich_transcript_with_analysis
 from app.language import AzureLanguageService
 from app.models import CallRecord, JobStatus, PostCallAnalysis, ProcessingStage, TranscriptResult
+from app.redaction import redact_transcript
 from app.storage import CallStore
 
 
@@ -32,14 +33,22 @@ class BatchProcessor:
         self._active: set[str] = set()
         self._lock = threading.Lock()
 
-    def discover(self, path: Path) -> CallRecord:
+    @staticmethod
+    def _audio_files(folder: Path) -> list[Path]:
+        """All supported audio files under folder, recursing into subfolders."""
+        return sorted(
+            p for p in folder.rglob("*")
+            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+        )
+
+    def discover(self, path: Path, root: Path | None = None) -> CallRecord:
         """Add file to store as pending without starting processing. No-op if already known."""
         path = path.expanduser().resolve()
         call_id = self.call_id_for(path)
         existing = self.store.get(call_id)
         if existing:
             return existing
-        record = CallRecord.from_path(path, call_id)
+        record = CallRecord.from_path(path, call_id, root=root)
         record.status = JobStatus.pending
         record.stage = ProcessingStage.queued
         record.progress_message = "Ready to start"
@@ -50,25 +59,17 @@ class BatchProcessor:
     def discover_folder(self, folder: Path) -> list[CallRecord]:
         folder = folder.expanduser().resolve()
         folder.mkdir(parents=True, exist_ok=True)
-        records: list[CallRecord] = []
-        for path in sorted(folder.iterdir()):
-            if path.suffix.lower() not in SUPPORTED_EXTENSIONS or not path.is_file():
-                continue
-            records.append(self.discover(path))
-        return records
+        return [self.discover(path, root=folder) for path in self._audio_files(folder)]
 
     def process_folder(self, folder: Path, force: bool = False, reanalyze: bool = False) -> list[CallRecord]:
         folder = folder.expanduser().resolve()
         folder.mkdir(parents=True, exist_ok=True)
-        records: list[CallRecord] = []
-        for path in sorted(folder.iterdir()):
-            if path.suffix.lower() not in SUPPORTED_EXTENSIONS or not path.is_file():
-                continue
-            record = self.enqueue(path, force=force, reanalyze=reanalyze)
-            records.append(record)
-        return records
+        return [
+            self.enqueue(path, force=force, reanalyze=reanalyze, root=folder)
+            for path in self._audio_files(folder)
+        ]
 
-    def enqueue(self, path: Path, force: bool = False, reanalyze: bool = False) -> CallRecord:
+    def enqueue(self, path: Path, force: bool = False, reanalyze: bool = False, root: Path | None = None) -> CallRecord:
         path = path.expanduser().resolve()
         call_id = self.call_id_for(path)
         existing = self.store.get(call_id)
@@ -77,8 +78,8 @@ class BatchProcessor:
 
         with self._lock:
             if call_id in self._active:
-                return existing or CallRecord.from_path(path, call_id)
-            record = existing or CallRecord.from_path(path, call_id)
+                return existing or CallRecord.from_path(path, call_id, root=root)
+            record = existing or CallRecord.from_path(path, call_id, root=root)
             profile_context = self._build_profile_context(record.analysis) if reanalyze and record.analysis else None
             record.status = JobStatus.queued
             record.stage = ProcessingStage.queued
@@ -131,7 +132,7 @@ class BatchProcessor:
                 transcript, analysis = self.language_service.enrich(transcript, analysis)
 
             record.analysis = analysis
-            record.transcript = enrich_transcript_with_analysis(transcript, analysis)
+            record.transcript = redact_transcript(enrich_transcript_with_analysis(transcript, analysis))
             record.status = JobStatus.complete
             record.stage = ProcessingStage.complete
             record.progress_message = "Complete"

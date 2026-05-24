@@ -34,7 +34,7 @@
     h2 { margin: 0 0 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); }
 
     /* ── App shell ── */
-    .app { min-height: 100vh; display: grid; grid-template-rows: 52px 1fr; }
+    .app { height: 100vh; height: 100dvh; display: grid; grid-template-rows: 52px minmax(0, 1fr); overflow: hidden; }
     header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; background: var(--surface); border-bottom: 1px solid var(--line); box-shadow: 0 1px 3px rgba(0,0,0,.05); }
     .brand { font-size: 15px; font-weight: 800; letter-spacing: -0.02em; color: var(--ink); }
     .brand span { color: var(--customer); }
@@ -53,8 +53,8 @@
     .btn.ghost:hover { background: var(--panel); color: var(--ink); }
 
     /* ── Layout ── */
-    main { display: grid; grid-template-columns: 300px 1fr; min-height: 0; overflow: hidden; }
-    .detail { overflow-y: auto; padding: 18px 22px 48px; }
+    main { display: grid; grid-template-columns: 300px 1fr; grid-template-rows: minmax(0, 1fr); min-height: 0; overflow: hidden; }
+    .detail { min-height: 0; overflow-y: auto; padding: 18px 22px 48px; }
     .workspace { display: flex; flex-direction: column; gap: 14px; }
 
     /* ── Sidebar ── */
@@ -88,9 +88,12 @@
       padding: 6px 10px;
       border-bottom: 1px solid var(--line);
       background: var(--agent-soft);
+      overflow-x: auto;
+      scrollbar-width: thin;
     }
     .sb-bulk-bar.visible { display: flex; }
-    .sb-sel-count { font-size: 12px; font-weight: 700; color: var(--agent); flex: 1; }
+    .sb-bulk-bar > * { flex: 0 0 auto; }
+    .sb-sel-count { font-size: 12px; font-weight: 700; color: var(--agent); }
 
     /* Scrollable calls list */
     .sb-list { flex: 1; overflow-y: auto; }
@@ -229,29 +232,47 @@
     /* ── Timeline overlay ── */
     .overlay-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
     .overlay-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
-    .overlay-scroll { overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; }
-    .timeline-canvas { min-width: 100%; }
-    .time-scale { position: relative; height: 22px; color: var(--faint); font-size: 11px; }
-    .tick { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
-    .rail { position: relative; min-height: 176px; border: 1px solid var(--line); border-radius: 8px; background: linear-gradient(90deg,rgba(30,41,59,.035) 1px,transparent 1px) 0 0/120px 100%, #fafbfd; overflow: visible; }
-    .track-label { position: absolute; left: 0; width: 76px; height: 24px; padding: 4px 8px; border-radius: 4px; background: rgba(255,255,255,.94); color: var(--muted); font-size: 11px; font-weight: 700; z-index: 3; }
-    .track-customer { top: 22px; }
-    .track-agent { top: 72px; }
-    .track-flags { top: 124px; }
-    .bar { position: absolute; height: 30px; border-radius: 6px; padding: 7px 8px; color: #fff; font-size: 11px; font-weight: 700; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
-    .bar.customer { top: 18px; background: var(--customer); }
-    .bar.staff { top: 68px; background: var(--agent); }
-    .bar.unknown { top: 94px; background: #94a3b8; }
-    .bar.negative { outline: 2px solid rgba(220,38,38,.3); }
-    .bar.positive { outline: 2px solid rgba(22,163,74,.25); }
-    .bar.mixed { outline: 2px solid rgba(217,119,6,.25); }
-    .marker { position: absolute; top: 122px; width: 12px; height: 42px; transform: translateX(-50%); cursor: pointer; }
-    .marker::before { content: ""; display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--warn); border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(180,83,9,.5); }
-    .marker span { position: absolute; top: 16px; left: 50%; width: 120px; transform: translateX(-50%); text-align: center; font-size: 10px; color: var(--warn); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #0f172a; z-index: 4; pointer-events: none; }
-    .playhead::after { content: ""; position: absolute; top: 0; left: 50%; width: 8px; height: 8px; border-radius: 50%; background: #0f172a; transform: translateX(-50%); }
     .zoom-row { display: flex; align-items: center; gap: 6px; }
     .zoom-level { min-width: 44px; text-align: center; font-size: 12px; color: var(--muted); font-weight: 600; }
+
+    /* Fixed lane-label gutter + horizontally scrollable canvas */
+    .timeline-frame { display: grid; grid-template-columns: 76px 1fr; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    .lane-gutter { display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--line); }
+    .gutter-spacer { height: 24px; }
+    .lane-name { display: flex; align-items: center; gap: 7px; padding: 0 10px; font-size: 11px; font-weight: 700; color: var(--muted); }
+    .lane-name.customer { height: 48px; }
+    .lane-name.staff { height: 48px; }
+    .lane-name.events { height: 40px; color: var(--faint); }
+    .lane-name::before { content: ""; width: 9px; height: 9px; border-radius: 3px; flex: none; }
+    .lane-name.customer::before { background: var(--customer); }
+    .lane-name.staff::before { background: var(--agent); }
+    .lane-name.events::before { background: var(--warn); border-radius: 50%; }
+
+    .overlay-scroll { overflow-x: auto; overflow-y: hidden; }
+    .timeline-canvas { min-width: 100%; }
+    .time-scale { position: relative; height: 24px; color: var(--faint); font-size: 11px; }
+    .tick { position: absolute; top: 4px; transform: translateX(-50%); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .tick::after { content: ""; position: absolute; left: 50%; top: 15px; width: 1px; height: 7px; background: var(--line); }
+    .rail { position: relative; height: 136px; }
+    .lane-band { position: absolute; left: 0; right: 0; }
+    .lane-band.customer { top: 0; height: 48px; background: var(--customer-soft); }
+    .lane-band.staff { top: 48px; height: 48px; background: var(--agent-soft); border-top: 1px solid var(--line); }
+    .lane-band.events { top: 96px; height: 40px; background: var(--panel); border-top: 1px solid var(--line); }
+
+    .bar { position: absolute; height: 26px; border-radius: 7px; border: none; padding: 0; cursor: pointer; box-shadow: 0 1px 2px rgba(15,23,42,.18); transition: filter .1s, transform .1s; }
+    .bar:hover { filter: brightness(1.08); transform: translateY(-1px); z-index: 4; }
+    .bar.customer { top: 11px; background: var(--customer); }
+    .bar.staff { top: 59px; background: var(--agent); }
+    .bar.unknown { top: 11px; background: var(--faint); }
+    .bar.negative { box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 3.5px var(--danger), 0 1px 2px rgba(15,23,42,.18); }
+    .bar.positive { box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 3.5px var(--success), 0 1px 2px rgba(15,23,42,.18); }
+    .bar.mixed { box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 3.5px var(--warn), 0 1px 2px rgba(15,23,42,.18); }
+
+    .marker { position: absolute; top: 102px; transform: translateX(-50%); width: 96px; display: flex; flex-direction: column; align-items: center; cursor: pointer; }
+    .marker::before { content: ""; width: 11px; height: 11px; border-radius: 50%; background: var(--warn); border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--warn); flex: none; }
+    .marker span { margin-top: 3px; font-size: 10px; color: var(--warn); font-weight: 700; text-align: center; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #0f172a; z-index: 5; pointer-events: none; }
+    .playhead::after { content: ""; position: absolute; top: -3px; left: 50%; width: 9px; height: 9px; border-radius: 50%; background: #0f172a; transform: translateX(-50%); }
 
     /* ── Transcript + Journey ── */
     .tran-journey { display: grid; grid-template-columns: minmax(320px, 1.3fr) minmax(240px, 0.7fr); gap: 14px; }
@@ -259,7 +280,7 @@
     .card-head { padding: 12px 16px 10px; border-bottom: 1px solid var(--line); background: var(--surface); }
 
     /* ── Chat bubbles ── */
-    .chat { display: flex; flex-direction: column; gap: 2px; padding: 12px 4px; }
+    .chat { display: flex; flex-direction: column; gap: 2px; padding: 12px 4px; max-height: 60vh; overflow-y: auto; }
     .bubble-row { display: flex; align-items: flex-end; gap: 10px; padding: 3px 12px; cursor: pointer; border-radius: 8px; transition: background .1s; }
     .bubble-row:hover { background: rgba(0,0,0,.02); }
     .bubble-row.role-staff { flex-direction: row-reverse; }
@@ -286,7 +307,7 @@
     .bubble-row.role-staff .bubble-tags { justify-content: flex-end; }
 
     /* ── Journey ── */
-    .journey-list { display: flex; flex-direction: column; }
+    .journey-list { display: flex; flex-direction: column; max-height: 60vh; overflow-y: auto; }
     .journey-item { display: grid; grid-template-columns: 48px 1fr; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); cursor: pointer; transition: background .1s; }
     .journey-item:first-child { border-top: 0; }
     .journey-item:hover { background: var(--panel); }
@@ -345,6 +366,8 @@
     .cfg-toggle input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--agent); cursor: pointer; }
     .cfg-toggle label { font-size: 13px; cursor: pointer; }
     .cfg-hint { font-size: 11px; color: var(--faint); margin-top: 2px; }
+    .cfg-note { grid-column: 1 / -1; font-size: 11px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; line-height: 1.45; }
+    .cfg-note code { font-size: 11px; background: rgba(15,23,42,.07); padding: 1px 5px; border-radius: 3px; }
 
     /* ── Responsive ── */
     @media (max-width: 900px) {
@@ -407,31 +430,53 @@
       <div>
         <div class="cfg-section-title">Transcription</div>
         <div class="cfg-grid">
-          <div class="cfg-field">
+          <div class="cfg-field full">
             <label>Provider</label>
             <select id="cfg-transcribe_provider">
-              <option value="openai">OpenAI / Azure OpenAI Batch</option>
-              <option value="azure_speech">Azure AI Speech (fast transcription)</option>
-              <option value="openai_realtime">OpenAI Realtime</option>
-              <option value="mock">Mock (testing)</option>
+              <option value="azure_speech">Azure AI Speech — Fast Transcription</option>
+              <option value="openai">Batch — OpenAI / Azure OpenAI (Whisper, GPT-4o transcribe)</option>
+              <option value="openai_realtime">OpenAI Realtime (streaming)</option>
+              <option value="mock">Mock (testing, no API calls)</option>
             </select>
           </div>
-          <div class="cfg-field">
-            <label>Model</label>
-            <input type="text" id="cfg-openai_transcribe_model" placeholder="e.g. gpt-4o-transcribe-diarize">
+
+          <!-- Azure AI Speech -->
+          <div class="cfg-field" data-tp="azure_speech">
+            <label>Speech Language</label>
+            <input type="text" id="cfg-azure_speech_language" placeholder="th-TH">
           </div>
-          <div class="cfg-field">
+          <div class="cfg-field" data-tp="azure_speech">
+            <label>Speaker Separation</label>
+            <select id="cfg-azure_speech_diarization">
+              <option value="diarization">Diarization — AI splits speakers (mono)</option>
+              <option value="channel">Channel — stereo (agent L / customer R)</option>
+              <option value="none">None — LLM assigns roles later</option>
+            </select>
+          </div>
+          <div class="cfg-field" data-tp="azure_speech">
+            <label>Max Speakers</label>
+            <input type="number" id="cfg-azure_speech_max_speakers" min="2" max="36" step="1">
+          </div>
+
+          <!-- OpenAI / Azure OpenAI batch -->
+          <div class="cfg-field" data-tp="openai">
+            <label>Model / Deployment</label>
+            <input type="text" id="cfg-openai_transcribe_model" placeholder="whisper-1, gpt-4o-transcribe-diarize">
+          </div>
+          <div class="cfg-field" data-tp="openai openai_realtime">
             <label>Language</label>
             <input type="text" id="cfg-openai_transcribe_language" placeholder="th / en / (blank = auto)">
           </div>
-          <div class="cfg-field">
+          <div class="cfg-field" data-tp="openai">
             <label>Chunking Strategy</label>
             <select id="cfg-openai_chunking_strategy">
               <option value="auto">auto</option>
               <option value="server">server</option>
             </select>
           </div>
-          <div class="cfg-field">
+
+          <!-- Shared: any provider that transcodes audio -->
+          <div class="cfg-field" data-tp="azure_speech openai openai_realtime">
             <label>Audio Bitrate</label>
             <select id="cfg-audio_transcode_bitrate">
               <option value="16k">16k (long files / low quality)</option>
@@ -440,6 +485,12 @@
               <option value="128k">128k (high quality)</option>
             </select>
           </div>
+
+          <!-- Per-provider credential notes (keys live in .env) -->
+          <div class="cfg-note" data-tp="azure_speech">API key, endpoint &amp; region are set in <code>.env</code> — <code>AZURE_SPEECH_API_KEY</code>, <code>AZURE_SPEECH_ENDPOINT</code>, <code>AZURE_SPEECH_REGION</code>.</div>
+          <div class="cfg-note" data-tp="openai">Credentials in <code>.env</code>: <code>OPENAI_API_KEY</code>, or set <code>AZURE_OPENAI_API_KEY</code> + <code>AZURE_OPENAI_TRANSCRIBE_ENDPOINT</code> to route to Azure OpenAI.</div>
+          <div class="cfg-note" data-tp="openai_realtime">Uses <code>OPENAI_API_KEY</code> and the <code>REALTIME_*</code> options in <code>.env</code>.</div>
+          <div class="cfg-note" data-tp="mock">No configuration needed — generates fake transcripts for local testing.</div>
         </div>
       </div>
       <div>
@@ -448,20 +499,24 @@
           <div class="cfg-field">
             <label>Provider</label>
             <select id="cfg-llm_provider">
-              <option value="openai">OpenAI</option>
               <option value="azure_openai">Azure OpenAI</option>
+              <option value="openai">OpenAI</option>
               <option value="anthropic">Anthropic</option>
               <option value="mock">Mock (testing)</option>
             </select>
           </div>
-          <div class="cfg-field">
+          <div class="cfg-field" data-lp="openai azure_openai">
             <label>Model / Deployment</label>
-            <input type="text" id="cfg-openai_model" placeholder="e.g. gpt-4o-mini, gpt-5.5">
+            <input type="text" id="cfg-openai_model" placeholder="gpt-5.5, gpt-4o-mini">
           </div>
-          <div class="cfg-field full">
+          <div class="cfg-field full" data-lp="openai azure_openai anthropic">
             <label>Analysis Output Language</label>
             <input type="text" id="cfg-analysis_language" placeholder="Thai or English">
           </div>
+          <div class="cfg-note" data-lp="azure_openai"><code>AZURE_OPENAI_API_KEY</code>, <code>AZURE_OPENAI_ENDPOINT</code> &amp; <code>AZURE_OPENAI_DEPLOYMENT</code> are set in <code>.env</code>.</div>
+          <div class="cfg-note" data-lp="openai"><code>OPENAI_API_KEY</code> is set in <code>.env</code>.</div>
+          <div class="cfg-note" data-lp="anthropic"><code>ANTHROPIC_API_KEY</code> and the model (<code>ANTHROPIC_MODEL</code>) are set in <code>.env</code>.</div>
+          <div class="cfg-note" data-lp="mock">No configuration needed — produces a sample analysis for testing.</div>
         </div>
       </div>
       <div>
@@ -560,7 +615,7 @@
   let currentTime = 0;
   let selectedRenderKey = null;
   let overlayZoom = 4;
-  let activePlayerState = null;
+  const playerStates = {}; // per call id: { time, playing, rate } — keeps playback independent per session
   let currentConfig = {};
 
   // Sorting
@@ -800,22 +855,27 @@
       return;
     }
     const existingPlayer = document.querySelector("#player");
-    if (existingPlayer && selectedRenderKey?.startsWith(`${call.id}:`)) {
-      activePlayerState = {
-        time: existingPlayer.currentTime || currentTime,
+    const sameSession = !!selectedRenderKey?.startsWith(`${call.id}:`);
+    if (existingPlayer && sameSession) {
+      playerStates[call.id] = {
+        time: existingPlayer.currentTime || playerStates[call.id]?.time || 0,
         playing: !existingPlayer.paused && !existingPlayer.ended,
         rate: existingPlayer.playbackRate || 1,
       };
     }
     const renderKey = `${call.id}:${call.status}:${call.updated_at}`;
-    if (!force && activePlayerState?.playing && call.status === "processing" && renderKey !== selectedRenderKey) {
+    if (!force && playerStates[call.id]?.playing && call.status === "processing" && renderKey !== selectedRenderKey) {
       selectedRenderKey = renderKey;
       updateLiveStatus(call);
       return;
     }
     if (!force && renderKey === selectedRenderKey) return;
     selectedRenderKey = renderKey;
-    currentTime = activePlayerState?.time || currentTime || 0;
+    // Restore this session's own position. Resume playback only on a same-session
+    // re-render (e.g. status poll), never auto-play when switching sessions.
+    const saved = playerStates[call.id];
+    currentTime = saved?.time || 0;
+    const restoreState = saved ? { time: saved.time, rate: saved.rate, playing: sameSession && saved.playing } : null;
 
     const missing = call.file_exists === false;
 
@@ -889,6 +949,7 @@
     };
     const t = call.transcript;
     const duration = t.duration_seconds || Math.max(...t.segments.map((s) => s.end || 0), 1);
+    const speakerRoles = buildSpeakerRoles(a.speaker_classifications);
     const allJourney = (a.customer_emotion_journey || []).concat(a.agent_emotion_journey || []);
     const criticals = (a.critical_flags || []).map((f) => `<span class="chip critical">${escHtml(f)}</span>`).join("");
     const products = (a.credit_card_products || []).map((p) => `<span class="chip product">${escHtml(p)}</span>`).join("");
@@ -897,6 +958,7 @@
     detailEl.innerHTML = `
       <div class="workspace">
         ${renderSessionHeader(call, a, missing)}
+        ${renderAzureLanguageCard(a)}
         ${renderProfiles(a)}
         ${flagsContent ? `<div class="flags-bar"><div class="chips">${flagsContent}</div></div>` : ""}
         <section class="overlay-card">
@@ -908,16 +970,24 @@
               <button class="btn sm" id="zoomIn">+</button>
             </div>
           </div>
-          <div class="overlay-scroll" id="overlayScroll">
-            <div class="timeline-canvas" style="width:${timelineWidth(duration)}px">
-              <div class="time-scale">${renderTicks(duration)}</div>
-              <div class="rail" id="overlay">
-                <div class="track-label track-customer">Customer</div>
-                <div class="track-label track-agent">Staff</div>
-                <div class="track-label track-flags">Events</div>
-                ${renderBars(t.segments, duration)}
-                ${renderMarkers(allJourney, duration)}
-                <div class="playhead" id="playhead" style="left:0"></div>
+          <div class="timeline-frame">
+            <div class="lane-gutter">
+              <div class="gutter-spacer"></div>
+              <div class="lane-name customer">Customer</div>
+              <div class="lane-name staff">Staff</div>
+              <div class="lane-name events">Events</div>
+            </div>
+            <div class="overlay-scroll" id="overlayScroll">
+              <div class="timeline-canvas" style="width:${timelineWidth(duration)}px">
+                <div class="time-scale">${renderTicks(duration)}</div>
+                <div class="rail" id="overlay">
+                  <div class="lane-band customer"></div>
+                  <div class="lane-band staff"></div>
+                  <div class="lane-band events"></div>
+                  ${renderBars(t.segments, duration, speakerRoles)}
+                  ${renderMarkers(allJourney, duration)}
+                  <div class="playhead" id="playhead" style="left:0"></div>
+                </div>
               </div>
             </div>
           </div>
@@ -925,7 +995,7 @@
         <div class="tran-journey">
           <section class="tran-card">
             <div class="card-head"><h2 style="margin:0">Transcript</h2></div>
-            <div class="chat">${renderChat(t.segments)}</div>
+            <div class="chat">${renderChat(t.segments, speakerRoles)}</div>
           </section>
           <section class="tran-card">
             <div class="card-head"><h2 style="margin:0">Emotion Journey</h2></div>
@@ -937,10 +1007,9 @@
           ${renderListCard("Risks", a.risks)}
           ${renderListCard("Next Actions", a.next_actions)}
           ${(a.quality_notes || []).length ? renderListCard("Quality Notes", a.quality_notes) : ""}
-          ${renderAzureLanguageCard(a)}
         </div>
       </div>`;
-    wirePlayback(duration, activePlayerState);
+    wirePlayback(duration, call.id, restoreState);
   }
 
   function renderSessionHeader(call, a, missing) {
@@ -996,9 +1065,9 @@
       </section>`;
   }
 
-  function renderChat(segments) {
+  function renderChat(segments, speakerRoles = {}) {
     return segments.map((seg, index) => {
-      const role = roleForSpeaker(seg.speaker);
+      const role = speakerRoles[seg.speaker] || roleForSpeaker(seg.speaker);
       const initial = (seg.speaker || "?").replace(/[^฀-๿A-Za-z0-9]/g, "").slice(0, 1).toUpperCase() || "?";
       const hasTags = (seg.keywords || []).length + (seg.tone_flags || []).length > 0;
       return `
@@ -1043,12 +1112,12 @@
     const hasFollowUp = a.azure_follow_up_items && a.azure_follow_up_items.length;
     const hasPii = a.pii_entities_found && a.pii_entities_found.length;
     if (!hasNarrative && !hasIssue && !hasResolution && !hasFollowUp && !hasPii) return "";
-    let html = `<section class="list-card" style="grid-column:1/-1"><h2>Azure Language Enrichment</h2>`;
+    let html = `<section class="list-card" style="grid-column:1/-1"><h2>Call Summary</h2>`;
     if (hasIssue) html += `<p style="margin-bottom:6px"><strong>Issue:</strong> ${escHtml(a.azure_summary_issue)}</p>`;
     if (hasResolution) html += `<p style="margin-bottom:6px"><strong>Resolution:</strong> ${escHtml(a.azure_summary_resolution)}</p>`;
     if (hasNarrative) html += `<p style="margin-bottom:10px">${escHtml(a.azure_summary_narrative)}</p>`;
     if (hasFollowUp) html += `<strong style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint)">Follow-up Tasks</strong><ul>${a.azure_follow_up_items.map((i) => `<li>${escHtml(i)}</li>`).join("")}</ul>`;
-    if (hasPii) html += `<p style="margin-top:8px;font-size:12px;color:var(--warn)">&#128274; PII detected and redacted in transcript: ${a.pii_entities_found.map(escHtml).join(", ")}</p>`;
+    if (hasPii) html += `<p style="margin-top:8px;font-size:12px;color:var(--warn)">&#128274; PII detected: ${a.pii_entities_found.map(escHtml).join(", ")}</p>`;
     html += `</section>`;
     return html;
   }
@@ -1080,13 +1149,26 @@
       .join("");
   }
 
-  function renderBars(segments, duration) {
+  function renderBars(segments, duration, speakerRoles = {}) {
     return segments.map((seg, i) => {
-      const role = roleForSpeaker(seg.speaker);
-      const w = clamp(((seg.end - seg.start) / Math.max(duration, 1)) * 100, 1.5, 100);
+      const role = speakerRoles[seg.speaker] || roleForSpeaker(seg.speaker);
+      const w = clamp(((seg.end - seg.start) / Math.max(duration, 1)) * 100, 0.8, 100);
       const title = [seg.speaker, seg.sentiment].concat(seg.tone_flags || [], seg.keywords || []).filter(Boolean).join(" | ");
-      return `<button class="bar ${role} ${seg.sentiment}" data-time="${seg.start}" data-index="${i}" title="${escHtml(title)}" style="left:${pct(seg.start, duration)};width:${w}%">${escHtml((seg.keywords && seg.keywords[0]) || seg.sentiment || seg.speaker)}</button>`;
+      return `<button class="bar ${role} ${seg.sentiment}" data-time="${seg.start}" data-index="${i}" title="${escHtml(title)}" style="left:${pct(seg.start, duration)};width:${w}%"></button>`;
     }).join("");
+  }
+
+  // Map each transcript speaker label to a lane role, using the analysis classifications
+  // (covers named speakers like "นาลินี"), then fall back to keyword matching.
+  function buildSpeakerRoles(classifications) {
+    const map = {};
+    (classifications || []).forEach((sc) => {
+      const role = sc.role === "customer" ? "customer" : sc.role === "call_center_staff" ? "staff" : null;
+      if (!role) return;
+      if (sc.speaker) map[sc.speaker] = role;
+      if (sc.display_name) map[sc.display_name] = role;
+    });
+    return map;
   }
 
   function roleForSpeaker(speaker) {
@@ -1112,13 +1194,16 @@
     await loadCalls();
   }
 
-  function wirePlayback(duration, restoreState = null) {
+  function wirePlayback(duration, callId, restoreState = null) {
     const player = document.querySelector("#player");
     const playhead = document.querySelector("#playhead");
     const overlay = document.querySelector("#overlay");
     const overlayScroll = document.querySelector("#overlayScroll");
     if (!player || !playhead || !overlay || !overlayScroll) return;
 
+    const saveState = () => {
+      playerStates[callId] = { time: player.currentTime || 0, playing: !player.paused && !player.ended, rate: player.playbackRate || 1 };
+    };
     const requestPlay = () => { const p = player.play(); if (p) p.catch(() => {}); };
     const seekTo = (time, e) => {
       if (e) { e.preventDefault(); e.stopPropagation(); }
@@ -1140,11 +1225,12 @@
         const next = row.nextElementSibling ? Number(row.nextElementSibling.dataset.time || duration) : duration;
         row.classList.toggle("active", currentTime >= start && currentTime < next);
       });
+      saveState();
     };
     player.addEventListener("timeupdate", sync);
     player.addEventListener("seeked", sync);
-    player.addEventListener("play", () => { activePlayerState = { time: player.currentTime || 0, playing: true, rate: player.playbackRate || 1 }; });
-    player.addEventListener("pause", () => { activePlayerState = { time: player.currentTime || 0, playing: false, rate: player.playbackRate || 1 }; });
+    player.addEventListener("play", saveState);
+    player.addEventListener("pause", saveState);
     document.querySelector("#zoomIn")?.addEventListener("click", () => { overlayZoom = clamp(overlayZoom * 1.5, 2, 24); selectedRenderKey = null; renderDetail(true); });
     document.querySelector("#zoomOut")?.addEventListener("click", () => { overlayZoom = clamp(overlayZoom / 1.5, 2, 24); selectedRenderKey = null; renderDetail(true); });
     detailEl.querySelectorAll("[data-time]").forEach((el) => el.addEventListener("click", (e) => seekTo(el.dataset.time, e)));
@@ -1182,11 +1268,24 @@
   const CFG_FIELDS = [
     "transcribe_provider", "openai_transcribe_model", "openai_transcribe_language",
     "openai_chunking_strategy", "audio_transcode_bitrate",
+    "azure_speech_language", "azure_speech_diarization", "azure_speech_max_speakers",
     "llm_provider", "openai_model", "analysis_language",
     "auto_process_on_start", "max_parallel_files",
     "azure_language_enabled", "azure_language_pii_redaction",
     "azure_language_sentiment", "azure_language_summarization",
   ];
+
+  // Show only the fields that apply to the selected transcription / LLM provider.
+  function syncSettingsVisibility() {
+    const tp = document.getElementById("cfg-transcribe_provider").value;
+    const lp = document.getElementById("cfg-llm_provider").value;
+    document.querySelectorAll("#settingsOverlay [data-tp]").forEach((el) => {
+      el.style.display = el.dataset.tp.split(" ").includes(tp) ? "" : "none";
+    });
+    document.querySelectorAll("#settingsOverlay [data-lp]").forEach((el) => {
+      el.style.display = el.dataset.lp.split(" ").includes(lp) ? "" : "none";
+    });
+  }
 
   function openSettings() {
     for (const field of CFG_FIELDS) {
@@ -1199,6 +1298,7 @@
         el.value = val === null || val === undefined ? "" : val;
       }
     }
+    syncSettingsVisibility();
     document.getElementById("settingsOverlay").classList.remove("hidden");
   }
 
@@ -1237,6 +1337,8 @@
   }
 
   document.getElementById("settingsBtn").addEventListener("click", openSettings);
+  document.getElementById("cfg-transcribe_provider").addEventListener("change", syncSettingsVisibility);
+  document.getElementById("cfg-llm_provider").addEventListener("change", syncSettingsVisibility);
   document.getElementById("settingsCloseBtn").addEventListener("click", closeSettings);
   document.getElementById("settingsCancelBtn").addEventListener("click", closeSettings);
   document.getElementById("settingsSaveBtn").addEventListener("click", saveSettings);

@@ -64,6 +64,33 @@ def test_batch_processor_accepts_common_audio_extensions() -> None:
     assert ".wma" in SUPPORTED_EXTENSIONS
 
 
+def test_redact_pii_masks_numbers_but_keeps_short_values() -> None:
+    from app.redaction import MASK, redact_pii, redact_transcript
+
+    assert redact_pii("โทร 081-234-5678 นะครับ") == f"โทร {MASK} นะครับ"
+    assert redact_pii("บัตรเลข 4111 1111 1111 1111") == f"บัตรเลข {MASK}"
+    assert redact_pii("เลขบัตรประชาชน 1 2345 67890 12 3") == f"เลขบัตรประชาชน {MASK}"
+    # short numbers (amounts, dates) and decimals are left intact
+    assert redact_pii("ยอด 2,500 บาท") == "ยอด 2,500 บาท"
+    assert redact_pii("วันที่ 2024-05-24") == "วันที่ 2024-05-24"
+    assert redact_pii("อัตรา 3.14159265 หน่วย") == "อัตรา 3.14159265 หน่วย"
+
+    transcript = TranscriptResult(
+        language="th",
+        duration_seconds=10,
+        segments=[
+            TranscriptSegment(start=0, end=2, speaker="ลูกค้า", text="เบอร์ผม 0812345678 ครับ"),
+            TranscriptSegment(start=2, end=4, speaker="นาลินี", text="ได้ค่ะ"),
+        ],
+        full_text="ลูกค้า: เบอร์ผม 0812345678 ครับ\nนาลินี: ได้ค่ะ",
+    )
+    redacted = redact_transcript(transcript)
+    assert MASK in redacted.segments[0].text
+    assert "0812345678" not in redacted.full_text
+    # idempotent
+    assert redact_transcript(redacted) is redacted
+
+
 def test_language_auto_does_not_force_transcription_language(tmp_path: Path) -> None:
     service = TranscriptionService(Settings(openai_transcribe_language="auto", data_dir=tmp_path))
     assert service._transcribe_language() is None
