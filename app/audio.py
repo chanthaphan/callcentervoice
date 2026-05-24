@@ -2,6 +2,8 @@ import base64
 import json
 import subprocess
 import tempfile
+import urllib.request
+import uuid
 import wave
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -10,6 +12,9 @@ from typing import Any, Callable
 from app.config import Settings
 from app.models import Sentiment, ToneFlag, TranscriptResult, TranscriptSegment
 
+
+WHISPER_SIZE_LIMIT = 25 * 1024 * 1024  # 25 MB — OpenAI hard limit
+WHISPER_CHUNK_MINUTES = 10  # split files that exceed the limit into 10-min chunks
 
 OPENAI_DIRECT_AUDIO_EXTENSIONS = {
     ".flac",
@@ -72,7 +77,151 @@ class TranscriptionService:
             return self._openai_realtime_transcribe(path, on_partial=on_partial)
         if provider == "openai":
             return self._openai_transcribe(path)
+        if provider == "azure_speech":
+            return self._azure_speech_transcribe(path)
         return self._mock_transcribe(path)
+
+    def _azure_speech_transcribe(self, path: Path) -> TranscriptResult:
+        api_key = self.settings.azure_speech_api_key
+        if not api_key:
+            raise RuntimeError("AZURE_SPEECH_API_KEY is required when TRANSCRIBE_PROVIDER=azure_speech")
+
+        endpoint = (self.settings.azure_speech_endpoint or "").strip().rstrip("/")
+        if not endpoint:
+            endpoint = f"https://{self.settings.azure_speech_region}.stt.speech.microsoft.com"
+        url = f"{endpoint}/speechtotext/transcriptions:transcribe?api-version=2024-11-15"
+
+        diarization_mode = (self.settings.azure_speech_diarization or "diarization").lower()
+        use_channels = diarization_mode == "channel"
+        use_diarization = diarization_mode == "diarization"
+
+        # Channel mode needs stereo audio — skip mono conversion
+        stereo = use_channels
+        upload_path, temporary_path = self._prepare_upload_file(path, stereo=stereo)
+        try:
+            definition = self._build_azure_speech_definition(use_channels, use_diarization)
+            audio_bytes = upload_path.read_bytes()
+            body, content_type = self._build_multipart(audio_bytes, json.dumps(definition))
+            req = urllib.request.Request(
+                url,
+                data=body,
+                headers={
+                    "Content-Type": content_type,
+                    "Ocp-Apim-Subscription-Key": api_key,
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=self.settings.openai_request_timeout_seconds) as resp:
+                payload = json.loads(resp.read())
+        finally:
+            if temporary_path and temporary_path.exists():
+                temporary_path.unlink()
+
+        return self._parse_azure_speech_response(payload, path, use_channels=use_channels)
+
+    def _build_azure_speech_definition(self, use_channels: bool, use_diarization: bool) -> dict[str, Any]:
+        language = self.settings.azure_speech_language or "th-TH"
+        definition: dict[str, Any] = {
+            "profanityFilterMode": "None",
+        }
+
+        # Locales. Passing more than one candidate turns on language identification —
+        # the service picks the locale per phrase, so no separate flag is needed.
+        candidates_raw = (self.settings.azure_speech_language_candidates or "").strip()
+        if candidates_raw:
+            definition["locales"] = [c.strip() for c in candidates_raw.split(",") if c.strip()]
+        else:
+            definition["locales"] = [language]
+
+        # Speaker separation
+        if use_channels:
+            # Stereo telephony: transcribe each channel independently (ch0=Agent, ch1=Customer).
+            definition["channels"] = [0, 1]
+        elif use_diarization:
+            # AI diarization on a single mono channel; labels phrases "speaker": 0/1/...
+            definition["diarization"] = {
+                "enabled": True,
+                "maxSpeakers": self.settings.azure_speech_max_speakers,
+            }
+
+        return definition
+
+    @staticmethod
+    def _build_multipart(audio_data: bytes, definition_json: str) -> tuple[bytes, str]:
+        boundary = uuid.uuid4().hex
+
+        def part_text(name: str, value: str, content_type: str) -> bytes:
+            return (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"\r\n'
+                f"Content-Type: {content_type}\r\n"
+                f"\r\n"
+                f"{value}\r\n"
+            ).encode("utf-8")
+
+        def part_binary(name: str, data: bytes, filename: str) -> bytes:
+            header = (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                f"Content-Type: application/octet-stream\r\n"
+                f"\r\n"
+            ).encode("utf-8")
+            return header + data + b"\r\n"
+
+        body = (
+            part_text("definition", definition_json, "application/json")
+            + part_binary("audio", audio_data, "audio.mp3")
+            + f"--{boundary}--\r\n".encode("utf-8")
+        )
+        return body, f"multipart/form-data; boundary={boundary}"
+
+    def _parse_azure_speech_response(
+        self, payload: dict[str, Any], path: Path, use_channels: bool = False
+    ) -> TranscriptResult:
+        phrases = payload.get("phrases") or []
+        duration_ms = payload.get("durationMilliseconds")
+        duration = round(duration_ms / 1000.0, 3) if duration_ms else audio_duration_seconds(path)
+
+        # Detect language from the first phrase when auto-detection was used
+        detected_language = None
+        if phrases:
+            detected_language = phrases[0].get("locale") or self.settings.azure_speech_language
+
+        segments: list[TranscriptSegment] = []
+        for item in phrases:
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            start = round((item.get("offsetMilliseconds") or 0) / 1000.0, 3)
+            end = round(start + (item.get("durationMilliseconds") or 0) / 1000.0, 3)
+
+            if use_channels:
+                # Channel 0 = Agent side, Channel 1 = Customer side (telephony convention)
+                channel = item.get("channel")
+                speaker = "Agent" if channel == 0 else "Customer" if channel == 1 else "Unknown"
+            else:
+                speaker_id = item.get("speaker")
+                speaker = f"Speaker {speaker_id}" if speaker_id is not None else "Unknown"
+
+            segments.append(TranscriptSegment(start=start, end=end, speaker=speaker, text=text))
+
+        # Sort by start time (multi-channel phrases may arrive channel-by-channel)
+        segments.sort(key=lambda s: s.start)
+
+        if not segments:
+            combined = " ".join(
+                p.get("text", "") for p in (payload.get("combinedPhrases") or [])
+            ).strip()
+            segments = [TranscriptSegment(
+                start=0, end=float(duration or 0), speaker="Unknown", text=combined or ""
+            )]
+
+        return TranscriptResult(
+            language=detected_language or self.settings.azure_speech_language,
+            duration_seconds=duration,
+            segments=segments,
+            full_text="\n".join(f"{s.speaker}: {s.text}" for s in segments),
+        )
 
     def _mock_transcribe(self, path: Path) -> TranscriptResult:
         duration = audio_duration_seconds(path) or 240
@@ -106,39 +255,143 @@ class TranscriptionService:
             full_text="\n".join(f"{item.speaker}: {item.text}" for item in segments),
         )
 
+    def _transcribe_request_kwargs(self, audio_file) -> dict[str, Any]:
+        """Build transcriptions.create kwargs, sending only the options each model accepts.
+
+        Passing unsupported params (e.g. timestamp_granularities to gpt-4o-transcribe, or a
+        null value) makes the audio models 400, so options are added conditionally:
+          whisper-1      → verbose_json + segment timestamps
+          *-transcribe-diarize → diarized_json + server-side chunking_strategy
+          gpt-4o[-mini]-transcribe → plain json (text only, no timestamps)
+        """
+        model = self.settings.openai_transcribe_model
+        is_diarization_model = "diarize" in model
+        wants_whisper_segments = "whisper" in model
+        if is_diarization_model:
+            response_format = "diarized_json"
+        elif wants_whisper_segments:
+            response_format = "verbose_json"
+        else:
+            response_format = "json"
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "file": audio_file,
+            "response_format": response_format,
+            "timeout": self.settings.openai_request_timeout_seconds,
+        }
+        language = self._transcribe_language()
+        if language:
+            kwargs["language"] = language
+        if wants_whisper_segments:
+            kwargs["timestamp_granularities"] = ["segment"]
+        if is_diarization_model:
+            kwargs["extra_body"] = {"chunking_strategy": self.settings.openai_chunking_strategy}
+        return kwargs
+
     def _openai_transcribe(self, path: Path) -> TranscriptResult:
-        if not self.settings.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is required when TRANSCRIBE_PROVIDER=openai")
-
-        from openai import OpenAI
-
-        client = OpenAI(api_key=self.settings.openai_api_key)
-        is_diarization_model = "diarize" in self.settings.openai_transcribe_model
-        wants_whisper_segments = self.settings.openai_transcribe_model == "whisper-1"
-        response_format = "diarized_json" if is_diarization_model else "verbose_json" if wants_whisper_segments else "json"
-        extra_body = (
-            {"chunking_strategy": self.settings.openai_chunking_strategy}
-            if is_diarization_model
-            else None
-        )
-        timestamp_granularities = ["segment"] if wants_whisper_segments else None
+        client = self._build_transcription_client()
         upload_path, temporary_path = self._prepare_upload_file(path)
         try:
+            if upload_path.stat().st_size > WHISPER_SIZE_LIMIT:
+                if temporary_path:
+                    temporary_path.unlink(missing_ok=True)
+                return self._openai_transcribe_chunked(path, client)
             with upload_path.open("rb") as audio_file:
                 response = client.audio.transcriptions.create(
-                    model=self.settings.openai_transcribe_model,
-                    file=audio_file,
-                    response_format=response_format,
-                    language=self._transcribe_language(),
-                    timestamp_granularities=timestamp_granularities,
-                    extra_body=extra_body,
-                    timeout=self.settings.openai_request_timeout_seconds,
+                    **self._transcribe_request_kwargs(audio_file)
                 )
             payload = response.model_dump() if hasattr(response, "model_dump") else dict(response)
             return self._parse_openai_response(payload, path)
         finally:
             if temporary_path and temporary_path.exists():
                 temporary_path.unlink()
+
+    def _build_transcription_client(self):
+        """Return an OpenAI-compatible client for audio transcriptions."""
+        azure_endpoint = self.settings.azure_openai_transcribe_endpoint
+        azure_key = self.settings.azure_openai_api_key
+        if azure_endpoint and azure_key:
+            from openai import AzureOpenAI
+            return AzureOpenAI(
+                api_key=azure_key,
+                azure_endpoint=azure_endpoint,
+                api_version=self.settings.azure_openai_transcribe_api_version,
+            )
+        if not self.settings.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY (or Azure transcription credentials) required when TRANSCRIBE_PROVIDER=openai")
+        from openai import OpenAI
+        return OpenAI(api_key=self.settings.openai_api_key)
+
+    def _openai_transcribe_chunked(self, path: Path, client) -> TranscriptResult:
+        chunks = self._split_audio_chunks(path)
+        if not chunks:
+            raise RuntimeError("Could not split oversized audio file — ffprobe/ffmpeg may be missing")
+        all_segments: list[TranscriptSegment] = []
+        language: str | None = None
+        total_duration: float | None = None
+        try:
+            for chunk_path, offset in chunks:
+                with chunk_path.open("rb") as audio_file:
+                    response = client.audio.transcriptions.create(
+                        **self._transcribe_request_kwargs(audio_file)
+                    )
+                payload = response.model_dump() if hasattr(response, "model_dump") else dict(response)
+                chunk_result = self._parse_openai_response(payload, chunk_path)
+                if language is None:
+                    language = chunk_result.language
+                for seg in chunk_result.segments:
+                    all_segments.append(
+                        seg.model_copy(update={"start": seg.start + offset, "end": seg.end + offset})
+                    )
+                chunk_duration = chunk_result.duration_seconds
+                if chunk_duration is not None:
+                    total_duration = offset + chunk_duration
+        finally:
+            for chunk_path, _ in chunks:
+                chunk_path.unlink(missing_ok=True)
+        if not all_segments:
+            raise RuntimeError("Chunked transcription returned no segments")
+        return TranscriptResult(
+            language=language,
+            duration_seconds=total_duration,
+            segments=all_segments,
+            full_text="\n".join(f"{s.speaker}: {s.text}" for s in all_segments),
+        )
+
+    def _split_audio_chunks(self, path: Path) -> list[tuple[Path, float]]:
+        duration = self._probe_duration_seconds(path)
+        if not duration:
+            return []
+        chunk_secs = WHISPER_CHUNK_MINUTES * 60
+        chunks: list[tuple[Path, float]] = []
+        offset = 0.0
+        while offset < duration:
+            output = Path(tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name)
+            command = [
+                "ffmpeg", "-y",
+                "-ss", str(offset),
+                "-i", str(path),
+                "-t", str(chunk_secs),
+                "-vn", "-ac", "1", "-ar", "16000",
+                "-b:a", self.settings.audio_transcode_bitrate,
+                str(output),
+            ]
+            try:
+                subprocess.run(command, check=True, capture_output=True, text=True)
+            except FileNotFoundError as exc:
+                for p, _ in chunks:
+                    p.unlink(missing_ok=True)
+                raise RuntimeError("ffmpeg is required to split oversized audio") from exc
+            except subprocess.CalledProcessError as exc:
+                output.unlink(missing_ok=True)
+                for p, _ in chunks:
+                    p.unlink(missing_ok=True)
+                message = exc.stderr.strip() or exc.stdout.strip() or "ffmpeg audio split failed"
+                raise RuntimeError(message) from exc
+            chunks.append((output, offset))
+            offset += chunk_secs
+        return chunks
 
     def _openai_realtime_transcribe(
         self,
@@ -513,39 +766,50 @@ class TranscriptionService:
         except (FileNotFoundError, subprocess.CalledProcessError, ValueError):
             return None
 
-    def _prepare_upload_file(self, path: Path) -> tuple[Path, Path | None]:
+    def _prepare_upload_file(self, path: Path, stereo: bool = False) -> tuple[Path, Path | None]:
         suffix = path.suffix.lower()
         should_transcode = suffix not in OPENAI_DIRECT_AUDIO_EXTENSIONS
         if suffix == ".wave":
             should_transcode = False
 
+        # Force-transcode native formats that are already over the upload limit
+        if not should_transcode and path.stat().st_size > WHISPER_SIZE_LIMIT:
+            should_transcode = True
+
         if not should_transcode:
             return path, None
 
+        output = self._ffmpeg_to_mp3(path, self.settings.audio_transcode_bitrate, stereo=stereo)
+
+        # If still over limit, re-transcode at a low speech-quality bitrate (16k handles ~3h files)
+        if output.stat().st_size > WHISPER_SIZE_LIMIT:
+            compressed = self._ffmpeg_to_mp3(path, "16k", stereo=stereo, existing=output)
+            output = compressed
+
+        return output, output
+
+    def _ffmpeg_to_mp3(
+        self, path: Path, bitrate: str, stereo: bool = False, existing: Path | None = None
+    ) -> Path:
+        if existing:
+            existing.unlink(missing_ok=True)
         output = Path(tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name)
+        channels = "2" if stereo else "1"
         command = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(path),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-b:a",
-            self.settings.audio_transcode_bitrate,
-            str(output),
+            "ffmpeg", "-y", "-i", str(path),
+            "-vn", "-ac", channels, "-ar", "16000",
+            "-b:a", bitrate, str(output),
         ]
         try:
             subprocess.run(command, check=True, capture_output=True, text=True)
         except FileNotFoundError as exc:
+            output.unlink(missing_ok=True)
             raise RuntimeError("ffmpeg is required to process this audio format") from exc
         except subprocess.CalledProcessError as exc:
             output.unlink(missing_ok=True)
             message = exc.stderr.strip() or exc.stdout.strip() or "ffmpeg conversion failed"
             raise RuntimeError(message) from exc
-        return output, output
+        return output
 
     def _parse_openai_response(self, payload: dict[str, Any], path: Path) -> TranscriptResult:
         raw_segments = payload.get("segments") or payload.get("speaker_segments") or []

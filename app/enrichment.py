@@ -56,11 +56,11 @@ def enrich_transcript_with_analysis(
         data = segment.model_copy(deep=True)
         role = role_by_speaker.get(segment.speaker)
         if role == SpeakerRole.customer:
-            data.speaker = display_by_speaker.get(segment.speaker) or f"Customer ({segment.speaker})"
+            data.speaker = display_by_speaker.get(segment.speaker) or "ลูกค้า"
             data.sentiment = _nearest_sentiment(segment.start, analysis.customer_emotion_journey, analysis.customer_sentiment)
             data.tone_flags = analysis.customer_tone_flags
         elif role == SpeakerRole.call_center_staff:
-            data.speaker = display_by_speaker.get(segment.speaker) or f"Staff ({segment.speaker})"
+            data.speaker = display_by_speaker.get(segment.speaker) or "เจ้าหน้าที่"
             data.sentiment = _nearest_sentiment(segment.start, analysis.agent_emotion_journey, analysis.agent_sentiment)
             data.tone_flags = analysis.agent_tone_flags
         else:
