@@ -1168,7 +1168,14 @@
     await loadCalls();
   });
 
-  document.querySelector("#refresh").addEventListener("click", loadCalls);
+  document.querySelector("#refresh").addEventListener("click", async () => {
+    await fetch("/api/discover-folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder: folderEl.value || "voice" }),
+    });
+    await loadCalls();
+  });
 
   // ── Settings modal ────────────────────────────────────────
 

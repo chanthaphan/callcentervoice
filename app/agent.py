@@ -216,6 +216,16 @@ class PostCallAgent:
                 new_sc.append(item)
         return analysis.model_copy(update={"speaker_classifications": new_sc})
 
+    @staticmethod
+    def _temperature_kwargs(model_name: str | None) -> dict:
+        # GPT-5 series and o-series reasoning models only accept the default temperature (1);
+        # langchain otherwise injects 0.7, which they reject. Other models get 0 for
+        # deterministic analysis.
+        name = (model_name or "").lower()
+        if name.startswith(("gpt-5", "o1", "o3", "o4")) or "gpt-5" in name:
+            return {"temperature": 1}
+        return {"temperature": 0}
+
     def _build_llm(self):
         provider = self.settings.llm_provider.lower()
         if provider == "openai":
@@ -226,8 +236,8 @@ class PostCallAgent:
             return ChatOpenAI(
                 model=self.settings.openai_model,
                 api_key=self.settings.openai_api_key,
-                temperature=0,
                 request_timeout=self.settings.llm_request_timeout_seconds,
+                **self._temperature_kwargs(self.settings.openai_model),
             )
         if provider == "azure_openai":
             missing = [
@@ -248,8 +258,8 @@ class PostCallAgent:
                 azure_endpoint=self.settings.azure_openai_endpoint,
                 azure_deployment=self.settings.azure_openai_deployment,
                 api_version=self.settings.azure_openai_api_version,
-                temperature=0,
                 request_timeout=self.settings.llm_request_timeout_seconds,
+                **self._temperature_kwargs(self.settings.azure_openai_deployment or self.settings.openai_model),
             )
         if provider == "anthropic":
             if not self.settings.anthropic_api_key:

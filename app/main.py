@@ -251,6 +251,12 @@ def process_folder(payload: ProcessFolderRequest):
     return processor.process_folder(folder, force=payload.force, reanalyze=payload.reanalyze)
 
 
+@app.post("/api/discover-folder")
+def discover_folder(payload: ProcessFolderRequest):
+    folder = Path(payload.folder) if payload.folder else settings.absolute_watch_folder()
+    return processor.discover_folder(folder)
+
+
 @app.post("/api/calls/{call_id}/start")
 def start_call(call_id: str):
     record = store.get(call_id)

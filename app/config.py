@@ -102,21 +102,22 @@ class Settings(BaseSettings):
     # Azure AI Speech Service (TRANSCRIBE_PROVIDER=azure_speech)
     azure_speech_api_key: str | None = None
     azure_speech_region: str = "eastus2"
+    # Full resource endpoint from the portal's "Keys and Endpoint" page, e.g.
+    # https://<resource>.cognitiveservices.azure.com/ . Required for custom-subdomain
+    # resources. If blank, falls back to the regional host {region}.stt.speech.microsoft.com.
+    azure_speech_endpoint: str | None = None
     azure_speech_language: str = "th-TH"
     # Speaker separation strategy for azure_speech:
     #   diarization — AI-based (works on mono/mixed audio, labels Speaker 1 / Speaker 2)
     #   channel     — stereo-channel split (agent on ch0, customer on ch1; requires stereo recording)
     #   none        — no speaker separation (single "Unknown" speaker, LLM assigns roles later)
     azure_speech_diarization: str = "diarization"
-    # Comma-separated BCP-47 locales for language auto-detection, e.g. "th-TH,en-US".
-    # When set, overrides azure_speech_language for automatic per-segment detection.
+    # Comma-separated BCP-47 locales for language identification, e.g. "th-TH,en-US".
+    # When set, overrides azure_speech_language; the service detects the locale per phrase.
     azure_speech_language_candidates: str | None = None
-    # How punctuation is added to the transcript.
-    #   DictatedAndAutomatic — add both explicit dictation marks and automatic punctuation (recommended)
-    #   Automatic            — automatic punctuation only
-    #   Dictated             — only marks spoken explicitly (e.g. "period", "comma")
-    #   None                 — no punctuation
-    azure_speech_punctuation_mode: str = "DictatedAndAutomatic"
+    # Max speakers the diarizer may distinguish (used when azure_speech_diarization=diarization).
+    # For agent+customer calls, 2 is correct. Azure supports 2–36.
+    azure_speech_max_speakers: int = Field(default=2, ge=2, le=36)
 
     def absolute_watch_folder(self) -> Path:
         return self.watch_folder.expanduser().resolve()

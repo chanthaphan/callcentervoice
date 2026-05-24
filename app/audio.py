@@ -86,12 +86,10 @@ class TranscriptionService:
         if not api_key:
             raise RuntimeError("AZURE_SPEECH_API_KEY is required when TRANSCRIBE_PROVIDER=azure_speech")
 
-        region = self.settings.azure_speech_region
-        url = (
-            f"https://{region}.stt.speech.microsoft.com"
-            "/speechtotext/transcriptions:transcribe"
-            "?api-version=2024-11-15"
-        )
+        endpoint = (self.settings.azure_speech_endpoint or "").strip().rstrip("/")
+        if not endpoint:
+            endpoint = f"https://{self.settings.azure_speech_region}.stt.speech.microsoft.com"
+        url = f"{endpoint}/speechtotext/transcriptions:transcribe?api-version=2024-11-15"
 
         diarization_mode = (self.settings.azure_speech_diarization or "diarization").lower()
         use_channels = diarization_mode == "channel"
@@ -125,26 +123,26 @@ class TranscriptionService:
         language = self.settings.azure_speech_language or "th-TH"
         definition: dict[str, Any] = {
             "profanityFilterMode": "None",
-            "punctuationMode": self.settings.azure_speech_punctuation_mode or "DictatedAndAutomatic",
         }
 
-        # Language / locale settings
+        # Locales. Passing more than one candidate turns on language identification —
+        # the service picks the locale per phrase, so no separate flag is needed.
         candidates_raw = (self.settings.azure_speech_language_candidates or "").strip()
         if candidates_raw:
-            # Auto-detect among candidate locales
-            candidates = [c.strip() for c in candidates_raw.split(",") if c.strip()]
-            definition["locales"] = candidates
-            definition["languageIdentification"] = {"candidateLocales": candidates}
+            definition["locales"] = [c.strip() for c in candidates_raw.split(",") if c.strip()]
         else:
             definition["locales"] = [language]
 
         # Speaker separation
         if use_channels:
-            # Stereo telephony: process each channel independently (ch0=Agent, ch1=Customer)
+            # Stereo telephony: transcribe each channel independently (ch0=Agent, ch1=Customer).
             definition["channels"] = [0, 1]
         elif use_diarization:
-            # AI-based diarization on mono/mixed audio
-            definition["diarizationSettings"] = {"enabled": True, "maxSpeakerCount": 2}
+            # AI diarization on a single mono channel; labels phrases "speaker": 0/1/...
+            definition["diarization"] = {
+                "enabled": True,
+                "maxSpeakers": self.settings.azure_speech_max_speakers,
+            }
 
         return definition
 
@@ -257,35 +255,51 @@ class TranscriptionService:
             full_text="\n".join(f"{item.speaker}: {item.text}" for item in segments),
         )
 
+    def _transcribe_request_kwargs(self, audio_file) -> dict[str, Any]:
+        """Build transcriptions.create kwargs, sending only the options each model accepts.
+
+        Passing unsupported params (e.g. timestamp_granularities to gpt-4o-transcribe, or a
+        null value) makes the audio models 400, so options are added conditionally:
+          whisper-1      → verbose_json + segment timestamps
+          *-transcribe-diarize → diarized_json + server-side chunking_strategy
+          gpt-4o[-mini]-transcribe → plain json (text only, no timestamps)
+        """
+        model = self.settings.openai_transcribe_model
+        is_diarization_model = "diarize" in model
+        wants_whisper_segments = "whisper" in model
+        if is_diarization_model:
+            response_format = "diarized_json"
+        elif wants_whisper_segments:
+            response_format = "verbose_json"
+        else:
+            response_format = "json"
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "file": audio_file,
+            "response_format": response_format,
+            "timeout": self.settings.openai_request_timeout_seconds,
+        }
+        language = self._transcribe_language()
+        if language:
+            kwargs["language"] = language
+        if wants_whisper_segments:
+            kwargs["timestamp_granularities"] = ["segment"]
+        if is_diarization_model:
+            kwargs["extra_body"] = {"chunking_strategy": self.settings.openai_chunking_strategy}
+        return kwargs
+
     def _openai_transcribe(self, path: Path) -> TranscriptResult:
         client = self._build_transcription_client()
-
-        is_diarization_model = "diarize" in self.settings.openai_transcribe_model
-        wants_whisper_segments = self.settings.openai_transcribe_model == "whisper-1"
-        response_format = "diarized_json" if is_diarization_model else "verbose_json" if wants_whisper_segments else "json"
-        extra_body = (
-            {"chunking_strategy": self.settings.openai_chunking_strategy}
-            if is_diarization_model
-            else None
-        )
-        timestamp_granularities = ["segment"] if wants_whisper_segments else None
         upload_path, temporary_path = self._prepare_upload_file(path)
         try:
             if upload_path.stat().st_size > WHISPER_SIZE_LIMIT:
                 if temporary_path:
                     temporary_path.unlink(missing_ok=True)
-                return self._openai_transcribe_chunked(
-                    path, client, response_format, timestamp_granularities, extra_body
-                )
+                return self._openai_transcribe_chunked(path, client)
             with upload_path.open("rb") as audio_file:
                 response = client.audio.transcriptions.create(
-                    model=self.settings.openai_transcribe_model,
-                    file=audio_file,
-                    response_format=response_format,
-                    language=self._transcribe_language(),
-                    timestamp_granularities=timestamp_granularities,
-                    extra_body=extra_body,
-                    timeout=self.settings.openai_request_timeout_seconds,
+                    **self._transcribe_request_kwargs(audio_file)
                 )
             payload = response.model_dump() if hasattr(response, "model_dump") else dict(response)
             return self._parse_openai_response(payload, path)
@@ -309,14 +323,7 @@ class TranscriptionService:
         from openai import OpenAI
         return OpenAI(api_key=self.settings.openai_api_key)
 
-    def _openai_transcribe_chunked(
-        self,
-        path: Path,
-        client,
-        response_format: str,
-        timestamp_granularities,
-        extra_body,
-    ) -> TranscriptResult:
+    def _openai_transcribe_chunked(self, path: Path, client) -> TranscriptResult:
         chunks = self._split_audio_chunks(path)
         if not chunks:
             raise RuntimeError("Could not split oversized audio file — ffprobe/ffmpeg may be missing")
@@ -327,13 +334,7 @@ class TranscriptionService:
             for chunk_path, offset in chunks:
                 with chunk_path.open("rb") as audio_file:
                     response = client.audio.transcriptions.create(
-                        model=self.settings.openai_transcribe_model,
-                        file=audio_file,
-                        response_format=response_format,
-                        language=self._transcribe_language(),
-                        timestamp_granularities=timestamp_granularities,
-                        extra_body=extra_body,
-                        timeout=self.settings.openai_request_timeout_seconds,
+                        **self._transcribe_request_kwargs(audio_file)
                     )
                 payload = response.model_dump() if hasattr(response, "model_dump") else dict(response)
                 chunk_result = self._parse_openai_response(payload, chunk_path)
