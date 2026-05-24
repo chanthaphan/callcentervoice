@@ -36,6 +36,16 @@ class CallStore:
     def get(self, call_id: str) -> CallRecord | None:
         return self._cache.get(call_id)
 
+    def delete(self, call_id: str) -> bool:
+        with self._lock:
+            if call_id not in self._cache:
+                return False
+            del self._cache[call_id]
+            path = self._path(call_id)
+            if path.exists():
+                path.unlink()
+        return True
+
     def list(self) -> list[CallRecord]:
         with self._lock:
             records = list(self._cache.values())

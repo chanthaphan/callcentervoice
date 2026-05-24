@@ -1,8 +1,50 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Fields that can be changed at runtime via /api/config
+CONFIGURABLE_FIELDS: tuple[str, ...] = (
+    "transcribe_provider",
+    "openai_transcribe_model",
+    "openai_transcribe_language",
+    "openai_chunking_strategy",
+    "audio_transcode_bitrate",
+    "llm_provider",
+    "openai_model",
+    "analysis_language",
+    "auto_process_on_start",
+    "max_parallel_files",
+    "azure_language_enabled",
+    "azure_language_pii_redaction",
+    "azure_language_sentiment",
+    "azure_language_summarization",
+)
+
+
+def apply_overrides(settings: "Settings", overrides: dict[str, Any]) -> None:
+    # Mutates the process-wide Settings singleton in place. Worker threads read these
+    # attributes while a PATCH /api/config runs; we rely on the GIL making each scalar
+    # assignment atomic rather than locking. A concurrent multi-field PATCH may be seen
+    # half-applied by an in-flight job, which is acceptable for these tuning knobs.
+    for key, value in overrides.items():
+        if key not in CONFIGURABLE_FIELDS or not hasattr(settings, key):
+            continue
+        current = getattr(settings, key)
+        try:
+            if isinstance(current, bool):
+                if isinstance(value, str):
+                    setattr(settings, key, value.lower() not in ("false", "0", "no", ""))
+                else:
+                    setattr(settings, key, bool(value))
+            elif isinstance(current, int):
+                setattr(settings, key, int(value))
+            else:
+                setattr(settings, key, value)
+        except (TypeError, ValueError):
+            pass
 
 
 class Settings(BaseSettings):
@@ -10,6 +52,9 @@ class Settings(BaseSettings):
 
     app_host: str = "127.0.0.1"
     app_port: int = 8000
+    # Optional shared secret. When set, all /api/* requests must present it via the
+    # X-API-Key header (or ?api_key= for browser-native audio/download URLs). Blank = open.
+    app_api_key: str | None = None
     watch_folder: Path = Path("voice")
     data_dir: Path = Path("data")
     max_parallel_files: int = Field(default=3, ge=1, le=16)
@@ -39,8 +84,39 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str | None = None
     azure_openai_deployment: str | None = None
     azure_openai_api_version: str = "2024-12-01-preview"
+    # Separate Azure endpoint for audio/transcriptions (can differ from chat completions endpoint)
+    azure_openai_transcribe_endpoint: str | None = None
+    azure_openai_transcribe_api_version: str = "2025-03-01-preview"
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-3-5-sonnet-latest"
+
+    # Azure Language Service (post-processing enrichment)
+    azure_language_enabled: bool = False
+    azure_language_pii_redaction: bool = True
+    azure_language_sentiment: bool = True
+    azure_language_summarization: bool = True
+    # Leave blank to reuse azure_openai_api_key / azure_openai_transcribe_endpoint
+    azure_language_endpoint: str | None = None
+    azure_language_api_key: str | None = None
+
+    # Azure AI Speech Service (TRANSCRIBE_PROVIDER=azure_speech)
+    azure_speech_api_key: str | None = None
+    azure_speech_region: str = "eastus2"
+    azure_speech_language: str = "th-TH"
+    # Speaker separation strategy for azure_speech:
+    #   diarization — AI-based (works on mono/mixed audio, labels Speaker 1 / Speaker 2)
+    #   channel     — stereo-channel split (agent on ch0, customer on ch1; requires stereo recording)
+    #   none        — no speaker separation (single "Unknown" speaker, LLM assigns roles later)
+    azure_speech_diarization: str = "diarization"
+    # Comma-separated BCP-47 locales for language auto-detection, e.g. "th-TH,en-US".
+    # When set, overrides azure_speech_language for automatic per-segment detection.
+    azure_speech_language_candidates: str | None = None
+    # How punctuation is added to the transcript.
+    #   DictatedAndAutomatic — add both explicit dictation marks and automatic punctuation (recommended)
+    #   Automatic            — automatic punctuation only
+    #   Dictated             — only marks spoken explicitly (e.g. "period", "comma")
+    #   None                 — no punctuation
+    azure_speech_punctuation_mode: str = "DictatedAndAutomatic"
 
     def absolute_watch_folder(self) -> Path:
         return self.watch_folder.expanduser().resolve()

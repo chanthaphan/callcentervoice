@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class JobStatus(str, Enum):
+    pending = "pending"
     queued = "queued"
     processing = "processing"
     complete = "complete"
@@ -17,6 +18,7 @@ class ProcessingStage(str, Enum):
     transcribing = "transcribing"
     diarizing = "diarizing"
     analyzing = "analyzing"
+    enriching = "enriching"
     complete = "complete"
     failed = "failed"
 
@@ -45,11 +47,23 @@ class SpeakerRole(str, Enum):
     unknown = "unknown"
 
 
+class Gender(str, Enum):
+    M = "M"
+    F = "F"
+    not_sure = "Not sure"
+
+
 class SpeakerClassification(BaseModel):
     speaker: str
     role: SpeakerRole = SpeakerRole.unknown
     display_name: str | None = None
     rationale: str | None = None
+
+
+class PersonProfile(BaseModel):
+    name: str | None = None
+    gender: Gender = Gender.not_sure
+    persona: str | None = None
 
 
 class TranscriptSegment(BaseModel):
@@ -78,7 +92,10 @@ class JourneyMoment(BaseModel):
 
 class PostCallAnalysis(BaseModel):
     summary: str
+    session_topic: str | None = None
     speaker_classifications: list[SpeakerClassification] = Field(default_factory=list)
+    agent_profile: PersonProfile = Field(default_factory=PersonProfile)
+    customer_profile: PersonProfile = Field(default_factory=PersonProfile)
     customer_sentiment: Sentiment
     agent_sentiment: Sentiment
     customer_tone_flags: list[ToneFlag] = Field(default_factory=list)
@@ -91,6 +108,12 @@ class PostCallAnalysis(BaseModel):
     risks: list[str] = Field(default_factory=list)
     next_actions: list[str] = Field(default_factory=list)
     quality_notes: list[str] = Field(default_factory=list)
+    # Azure Language Service enrichment (populated when azure_language_enabled=true)
+    azure_summary_issue: str | None = None
+    azure_summary_resolution: str | None = None
+    azure_summary_narrative: str | None = None
+    azure_follow_up_items: list[str] = Field(default_factory=list)
+    pii_entities_found: list[str] = Field(default_factory=list)
 
 
 class CallRecord(BaseModel):
