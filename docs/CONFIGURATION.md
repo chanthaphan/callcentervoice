@@ -85,6 +85,16 @@ Requests are retried with exponential backoff on HTTP 429/5xx and timeouts.
 
 GPT-5 / o-series models only accept the default temperature, which is handled automatically; other models use `temperature=0`. LLM calls use `max_retries=4`.
 
+## Analysis add-ons — products, PII & KB verification
+
+| Variable | Default | Description |
+|---|---|---|
+| `PRODUCT_KB_DIR` | `data/prod_kb/Credit-Cards` | BBL product knowledge base. Credit-card products are scoped to these titles; non-BBL cards bucket to `อื่นๆ`. |
+| `LLM_PII_REDACTION` | `false` | After the regex floor, use the LLM to mask context PII (names, addresses, birth dates) before diarization/analysis. One extra LLM call. |
+| `KB_VERIFICATION` | `false` | Verify the staff's factual claims against the product KB page (`supported` / `not_found` / `contradicts`). One extra LLM call; runs only when a BBL product is detected. |
+
+All three need a real `LLM_PROVIDER` (no-ops under `mock`) and apply to future analyses — **Re-analyze** existing calls to apply them. Full details: **[ANALYTICS_AND_KB.md](ANALYTICS_AND_KB.md)**.
+
 ## Azure AI Language enrichment (optional)
 
 Runs after the LLM step to add name-level PII redaction, per-utterance sentiment, and conversation summarization. **Requires a separate Azure AI Language resource.** Best-effort — if it fails or isn't configured, the pipeline continues.
@@ -98,13 +108,13 @@ Runs after the LLM step to add name-level PII redaction, per-utterance sentiment
 | `AZURE_LANGUAGE_SENTIMENT` | `true` | Per-utterance positive/negative/neutral. |
 | `AZURE_LANGUAGE_SUMMARIZATION` | `true` | Issue / resolution / narrative / follow-up tasks. English fully supported; Thai degrades gracefully. |
 
-> **Local vs. Azure PII redaction.** Local redaction (always on, no dependency) masks 9+ digit number runs only. Azure Language PII additionally redacts names, locations, etc. With Azure Language disabled, the "Call Summary" card's detected-PII line lists entities the LLM noticed but does **not** mask names in the transcript.
+> **PII redaction layers.** The local regex floor (always on, no dependency) masks 9+ digit runs **and emails** inside transcription. For names/addresses/birth dates, enable either the local LLM layer (`LLM_PII_REDACTION`) or Azure Language PII (`AZURE_LANGUAGE_PII_REDACTION`). With neither enabled, names are not masked in the transcript (the "Call Summary" card's detected-PII line still lists entities the LLM noticed).
 
 ## Runtime-configurable settings
 
 These can be changed live from the Settings panel or `PATCH /api/config` (no restart), and persist to `DATA_DIR/config_overrides.json`:
 
-`transcribe_provider`, `openai_transcribe_model`, `openai_transcribe_language`, `openai_chunking_strategy`, `audio_transcode_bitrate`, `azure_speech_language`, `azure_speech_diarization`, `azure_speech_max_speakers`, `llm_provider`, `openai_model`, `analysis_language`, `auto_process_on_start`, `max_parallel_files`, `azure_language_enabled`, `azure_language_pii_redaction`, `azure_language_sentiment`, `azure_language_summarization`.
+`transcribe_provider`, `openai_transcribe_model`, `openai_transcribe_language`, `openai_chunking_strategy`, `audio_transcode_bitrate`, `azure_speech_language`, `azure_speech_diarization`, `azure_speech_max_speakers`, `llm_provider`, `openai_model`, `analysis_language`, `auto_process_on_start`, `max_parallel_files`, `azure_language_enabled`, `azure_language_pii_redaction`, `azure_language_sentiment`, `azure_language_summarization`, `llm_pii_redaction`, `kb_verification`.
 
 Notes:
 - **API keys/endpoints are never runtime-editable** and never sent to the browser — set them in `.env`.
