@@ -54,6 +54,19 @@ Plain-text report (summary, profiles, topics, flags, risks, next actions, speake
 
 ---
 
+## Analytics
+
+### `GET /api/stats`
+Aggregated dashboard analytics over all calls, filterable. Query params (all optional): `digest` (`daily`|`weekly`|`monthly`), `date_from`, `date_to` (ISO call-date range), `status`, `sentiment`, `product` (comma-separated). Returns `totals`, `kpis`, `timeline`, `sentiment_trend`, `sentiment`, `tone_flags`, `topics`, `products`, `critical_flags`, `monthly`, `kb`, and a filter-independent `facets` block.
+
+```bash
+curl "http://127.0.0.1:8000/api/stats?digest=monthly&sentiment=negative"
+```
+
+Full response shape and field meanings: **[ANALYTICS_AND_KB.md](ANALYTICS_AND_KB.md)**.
+
+---
+
 ## Processing actions
 
 ### `POST /api/process-folder`
