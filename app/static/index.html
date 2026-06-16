@@ -371,6 +371,86 @@
     .cfg-note { grid-column: 1 / -1; font-size: 11px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; line-height: 1.45; }
     .cfg-note code { font-size: 11px; background: rgba(15,23,42,.07); padding: 1px 5px; border-radius: 3px; }
 
+    /* ── Top nav ── */
+    .topnav { display: flex; gap: 4px; margin-left: 14px; }
+    .navbtn { height: 32px; padding: 0 14px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer; }
+    .navbtn:hover { background: var(--panel); color: var(--ink); }
+    .navbtn.active { background: var(--agent-soft); color: var(--agent); border-color: var(--agent-border); }
+
+    /* ── Dashboard ── */
+    .app.dashboard-mode aside { display: none; }
+    /* Sidebar is hidden in dashboard mode, so the detail pane spans the full
+       width and height — including at the ≤900px breakpoint, where the default
+       layout reserves a 220px row for the (now-hidden) sidebar. */
+    .app.dashboard-mode main { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
+    .dash { display: flex; flex-direction: column; gap: 16px; max-width: 1100px; }
+    .dash-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .dash-title { font-size: 18px; font-weight: 800; color: var(--ink); }
+    .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .seg button { height: 30px; padding: 0 14px; border: 0; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 700; cursor: pointer; border-left: 1px solid var(--line); }
+    .seg button:first-child { border-left: 0; }
+    .seg button.active { background: var(--agent); color: #fff; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+    .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+    .kpi .v { font-size: 26px; font-weight: 800; color: var(--ink); letter-spacing: -.02em; }
+    .kpi .v.danger { color: var(--danger); } .kpi .v.warn { color: var(--warn); } .kpi .v.success { color: var(--success); }
+    .kpi .k { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--faint); margin-top: 2px; }
+    .dash-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+    .dash-card h3 { font-size: 13px; font-weight: 800; color: var(--ink); margin: 0 0 12px; }
+    .dash-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .bars { display: flex; align-items: flex-end; gap: 6px; height: 170px; padding-top: 8px; }
+    .bars .col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
+    .bars .col .bv { font-size: 10px; font-weight: 700; color: var(--muted); }
+    /* .vbar (not .bar) — .bar is the absolutely-positioned audio-timeline bar */
+    .bars .col .vbar { width: 100%; max-width: 34px; background: var(--agent); border-radius: 4px 4px 0 0; min-height: 2px; }
+    .bars .col .bl { font-size: 9px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+    .hbar { display: grid; grid-template-columns: 130px 1fr 40px; align-items: center; gap: 8px; margin-bottom: 7px; font-size: 12px; }
+    .hbar .lbl { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hbar .track { background: var(--panel); border-radius: 999px; height: 10px; overflow: hidden; }
+    .hbar .fill { display: block; height: 100%; background: var(--agent); border-radius: 999px; min-width: 2px; }
+    .hbar .fill.positive { background: var(--success); } .hbar .fill.negative { background: var(--danger); }
+    .hbar .fill.neutral { background: var(--faint); } .hbar .fill.mixed { background: var(--warn); }
+    .hbar .num { text-align: right; font-weight: 700; color: var(--muted); }
+    .dash-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .dash-table th, .dash-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    .dash-table th { font-size: 11px; text-transform: uppercase; color: var(--faint); font-weight: 700; }
+    .dash-table td.num, .dash-table th.num { text-align: right; }
+    .dash-empty { color: var(--muted); font-size: 13px; padding: 40px; text-align: center; }
+    .dash-sub { font-size: 11px; font-weight: 700; color: var(--faint); margin-left: 6px; }
+    .hbar .fill.other { background: var(--faint); }
+    /* ── Filter bar ── */
+    .filterbar { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; position: sticky; top: 0; z-index: 5; }
+    .fgroup { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .fgroup.wide { flex: 1; min-width: 220px; }
+    .flabel { font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+    .fdash { color: var(--faint); }
+    .filterbar input[type=date] { height: 30px; border: 1px solid var(--line); border-radius: 6px; padding: 0 8px; font-size: 12px; color: var(--ink); background: var(--surface); }
+    .fchips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .fchips.scroll { max-height: 64px; overflow-y: auto; }
+    .fchip { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 11px; font-weight: 600; background: var(--surface); color: var(--muted); cursor: pointer; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fchip:hover { background: var(--panel); }
+    .fchip.active { background: var(--agent); border-color: var(--agent); color: #fff; }
+    /* ── Sentiment trend (stacked) ── */
+    .legend { display: flex; gap: 14px; margin-bottom: 8px; }
+    .legend .lg { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+    .legend .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+    .bars .col .sbar { width: 100%; max-width: 34px; display: flex; flex-direction: column-reverse; border-radius: 4px 4px 0 0; overflow: hidden; min-height: 2px; }
+    .sseg { width: 100%; }
+    .sent-positive { background: var(--success); } .sent-neutral { background: var(--faint); }
+    .sent-negative { background: var(--danger); } .sent-mixed { background: var(--warn); }
+    .hbar .fill.warn { background: var(--warn); }
+    /* ── KB verification (per-call) ── */
+    .kb-card { margin-top: 14px; }
+    .kbc { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }
+    .kbc:first-of-type { border-top: 0; }
+    .kbc-verdict { flex: 0 0 auto; align-self: flex-start; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+    .kbc-verdict.ok { color: var(--success); background: rgba(22,163,74,.1); }
+    .kbc-verdict.warn { color: var(--warn); background: rgba(217,119,6,.1); }
+    .kbc-verdict.bad { color: var(--danger); background: rgba(220,38,38,.1); }
+    .kbc-claim { font-size: 13px; color: var(--ink); }
+    .kbc-ev { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    @media (max-width: 760px) { .dash-2col { grid-template-columns: 1fr; } }
+
     /* ── Responsive ── */
     @media (max-width: 900px) {
       main { grid-template-columns: 1fr; grid-template-rows: 220px 1fr; }
@@ -385,6 +465,10 @@
 <div class="app">
   <header>
     <span class="brand">Call<span>Center</span> Analysis</span>
+    <nav class="topnav">
+      <button class="navbtn active" id="navSessions">Sessions</button>
+      <button class="navbtn" id="navDashboard">Dashboard</button>
+    </nav>
     <div class="header-controls">
       <input id="folder" value="voice" aria-label="Folder path"/>
       <button class="btn primary" id="process">Process</button>
@@ -568,6 +652,25 @@
           </div>
         </div>
       </div>
+      <div>
+        <div class="cfg-section-title">LLM PII Redaction</div>
+        <div class="cfg-grid">
+          <div class="cfg-field full">
+            <div class="cfg-toggle">
+              <input type="checkbox" id="cfg-llm_pii_redaction">
+              <label for="cfg-llm_pii_redaction">LLM PII Redaction — mask names, addresses, birth dates via the analysis LLM</label>
+            </div>
+            <span class="cfg-hint">Runs after the built-in numeric redaction (IDs, phones, cards) and before analysis. Uses the configured LLM provider; adds one extra call per call.</span>
+          </div>
+          <div class="cfg-field full">
+            <div class="cfg-toggle">
+              <input type="checkbox" id="cfg-kb_verification">
+              <label for="cfg-kb_verification">KB Verification — check staff statements against the product knowledge base</label>
+            </div>
+            <span class="cfg-hint">When a BBL product is discussed, verifies the agent's factual claims against the product page and flags ตรงตาม KB / ไม่พบใน KB / ขัดแย้งกับ KB. Adds one extra LLM call per call.</span>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn" id="settingsCancelBtn">Cancel</button>
@@ -622,6 +725,7 @@
   let overlayZoom = 4;
   const playerStates = {}; // per call id: { time, playing, rate } — keeps playback independent per session
   let currentConfig = {};
+  let view = "sessions";   // "sessions" | "dashboard"
 
   // Sorting
   const SORT_OPTIONS = [
@@ -913,6 +1017,7 @@
   // ── Detail rendering ──────────────────────────────────────
 
   async function renderDetail(force = false) {
+    if (view === "dashboard") return;  // dashboard owns the detail pane; don't clobber it
     if (!selectedId) {
       selectedRenderKey = null;
       detailEl.innerHTML = `<div class="empty">Select a session to view analysis</div>`;
@@ -1077,6 +1182,7 @@
           ${renderListCard("Risks", a.risks)}
           ${renderListCard("Next Actions", a.next_actions)}
           ${(a.quality_notes || []).length ? renderListCard("Quality Notes", a.quality_notes) : ""}
+          ${renderKbChecks(a)}
         </div>
       </div>`;
     wirePlayback(duration, call.id, restoreState);
@@ -1173,6 +1279,22 @@
   function renderListCard(title, items) {
     if (!items || !items.length) return "";
     return `<section class="list-card"><h2>${title}</h2><ul>${items.map((i) => `<li>${escHtml(i)}</li>`).join("")}</ul></section>`;
+  }
+
+  const KB_VERDICT = {
+    supported: { th: "ตรงตาม KB", chip: "ok", fill: "positive" },
+    not_found: { th: "ไม่พบใน KB", chip: "warn", fill: "warn" },
+    contradicts: { th: "ขัดแย้งกับ KB", chip: "bad", fill: "negative" },
+  };
+
+  function renderKbChecks(a) {
+    const checks = a.kb_checks || [];
+    if (!checks.length) return "";
+    const rows = checks.map((c) => {
+      const v = KB_VERDICT[c.verdict] || { th: c.verdict, chip: "" };
+      return `<div class="kbc"><span class="kbc-verdict ${v.chip}">${v.th}</span><div><div class="kbc-claim">${escHtml(c.claim)}</div>${c.evidence ? `<div class="kbc-ev">KB: ${escHtml(c.evidence)}</div>` : ""}</div></div>`;
+    }).join("");
+    return `<section class="list-card kb-card" style="grid-column:1/-1"><h2>การตรวจสอบตาม KB</h2>${rows}</section>`;
   }
 
   function renderAzureLanguageCard(a) {
@@ -1343,6 +1465,7 @@
     "auto_process_on_start", "max_parallel_files",
     "azure_language_enabled", "azure_language_pii_redaction",
     "azure_language_sentiment", "azure_language_summarization",
+    "llm_pii_redaction", "kb_verification",
   ];
 
   // Show only the fields that apply to the selected transcription / LLM provider.
@@ -1415,6 +1538,190 @@
   document.getElementById("settingsOverlay").addEventListener("click", (e) => {
     if (e.target === document.getElementById("settingsOverlay")) closeSettings();
   });
+
+  // ── Dashboard ────────────────────────────────────────────
+  const appEl = document.querySelector(".app");
+  let dashDigest = "daily";
+  let dashData = null;
+  let dashFilters = { date_from: "", date_to: "", statuses: new Set(), sentiments: new Set(), products: new Set() };
+
+  const SENTS = ["positive", "neutral", "negative", "mixed"];
+  const SENT_TH = { positive: "เชิงบวก", neutral: "กลาง", negative: "เชิงลบ", mixed: "ผสม" };
+  const TONE_TH = { calm: "สุขุม", frustrated: "หงุดหงิด", angry: "โกรธ", confused: "สับสน", urgent: "เร่งด่วน", satisfied: "พอใจ", empathetic: "เห็นอกเห็นใจ", procedural: "ตามขั้นตอน" };
+  const OTHER_LABEL = "อื่นๆ";
+
+  const fmtDur = (s) => {
+    s = Math.round(s || 0);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+  };
+  const anyFilter = () => dashFilters.date_from || dashFilters.date_to ||
+    dashFilters.statuses.size || dashFilters.sentiments.size || dashFilters.products.size;
+
+  function setView(v) {
+    view = v;
+    document.getElementById("navSessions").classList.toggle("active", v === "sessions");
+    document.getElementById("navDashboard").classList.toggle("active", v === "dashboard");
+    appEl.classList.toggle("dashboard-mode", v === "dashboard");
+    if (v === "dashboard") loadDashboard();
+    else renderDetail();
+  }
+
+  function statsQuery() {
+    const p = new URLSearchParams({ digest: dashDigest });
+    if (dashFilters.date_from) p.set("date_from", dashFilters.date_from);
+    if (dashFilters.date_to) p.set("date_to", dashFilters.date_to);
+    if (dashFilters.statuses.size) p.set("status", [...dashFilters.statuses].join(","));
+    if (dashFilters.sentiments.size) p.set("sentiment", [...dashFilters.sentiments].join(","));
+    if (dashFilters.products.size) p.set("product", [...dashFilters.products].join(","));
+    return p.toString();
+  }
+
+  async function loadDashboard() {
+    if (!dashData) detailEl.innerHTML = `<div class="dash"><div class="dash-empty">กำลังโหลด…</div></div>`;
+    try {
+      const res = await fetch(`/api/stats?${statsQuery()}`);
+      dashData = await res.json();
+    } catch {
+      detailEl.innerHTML = `<div class="dash"><div class="dash-empty">โหลดสถิติไม่สำเร็จ</div></div>`;
+      return;
+    }
+    if (view === "dashboard") renderDashboard();
+  }
+
+  function barsChart(data, key) {
+    if (!data.length) return `<div class="dash-empty">ยังไม่มีข้อมูล</div>`;
+    const max = Math.max(...data.map((d) => d[key]), 1);
+    return `<div class="bars">${data.map((d) => {
+      const h = Math.round((d[key] / max) * 140);
+      const label = d.period.length > 7 ? d.period.slice(5) : d.period;
+      return `<div class="col" title="${escHtml(d.period)}: ${d[key]}"><span class="bv">${d[key] || ""}</span><div class="vbar" style="height:${h}px"></div><span class="bl">${escHtml(label)}</span></div>`;
+    }).join("")}</div>`;
+  }
+
+  function stackedTrend(data) {
+    if (!data || !data.length) return `<div class="dash-empty">ยังไม่มีข้อมูล</div>`;
+    const totals = data.map((d) => SENTS.reduce((s, k) => s + (d[k] || 0), 0));
+    const max = Math.max(...totals, 1);
+    const legend = `<div class="legend">${SENTS.map((s) => `<span class="lg"><i class="dot sent-${s}"></i>${SENT_TH[s]}</span>`).join("")}</div>`;
+    const bars = data.map((d, i) => {
+      const t = totals[i];
+      const colH = Math.round((t / max) * 140);
+      const segs = SENTS.filter((k) => d[k]).map((k) =>
+        `<div class="sseg sent-${k}" style="height:${t ? Math.round((d[k] / t) * colH) : 0}px" title="${SENT_TH[k]}: ${d[k]}"></div>`
+      ).join("");
+      const label = d.period.length > 7 ? d.period.slice(5) : d.period;
+      return `<div class="col"><span class="bv">${t || ""}</span><div class="sbar" style="height:${colH}px">${segs}</div><span class="bl">${escHtml(label)}</span></div>`;
+    }).join("");
+    return legend + `<div class="bars">${bars}</div>`;
+  }
+
+  function hbars(items) {
+    if (!items || !items.length) return `<div class="dash-empty">ยังไม่มีข้อมูล</div>`;
+    const max = Math.max(...items.map((i) => i.count), 1);
+    return items.map((i) =>
+      `<div class="hbar"><span class="lbl" title="${escHtml(i.label)}">${escHtml(i.label)}</span><span class="track"><span class="fill ${i.cls || ""}" style="width:${Math.round((i.count / max) * 100)}%"></span></span><span class="num">${i.count}</span></div>`
+    ).join("");
+  }
+
+  function monthlyTable(rows) {
+    if (!rows || !rows.length) return `<div class="dash-empty">ยังไม่มีข้อมูล</div>`;
+    const body = rows.slice().reverse().map((r) =>
+      `<tr><td>${escHtml(r.month)}</td><td class="num">${r.total}</td><td class="num">${r.complete}</td><td class="num">${fmtDur(r.avg_duration)}</td><td class="num">${r.negative_pct}%</td><td class="num">${r.critical_pct}%</td><td>${escHtml(r.top_topic || "—")}</td></tr>`
+    ).join("");
+    return `<table class="dash-table"><thead><tr><th>เดือน</th><th class="num">สาย</th><th class="num">วิเคราะห์</th><th class="num">เฉลี่ย</th><th class="num">ลบ%</th><th class="num">สำคัญ%</th><th>หัวข้อเด่น</th></tr></thead><tbody>${body}</tbody></table>`;
+  }
+
+  function fchip(group, value, label) {
+    const active = dashFilters[group].has(value) ? " active" : "";
+    return `<button class="fchip${active}" data-group="${group}" data-value="${escHtml(value)}" title="${escHtml(label)}">${escHtml(label)}</button>`;
+  }
+
+  function renderFilters(f) {
+    const st = (f.statuses || []).map((s) => fchip("statuses", s, s)).join("");
+    const se = (f.sentiments || []).map((s) => fchip("sentiments", s, SENT_TH[s] || s)).join("");
+    const pr = (f.products || []).map((p) => fchip("products", p, p)).join("");
+    return `<div class="filterbar">
+      <div class="fgroup"><span class="flabel">ช่วงวันที่</span><input type="date" id="fDateFrom" value="${dashFilters.date_from}"><span class="fdash">–</span><input type="date" id="fDateTo" value="${dashFilters.date_to}"></div>
+      <div class="fgroup"><span class="flabel">สถานะ</span><div class="fchips">${st}</div></div>
+      <div class="fgroup"><span class="flabel">ความรู้สึก</span><div class="fchips">${se}</div></div>
+      <div class="fgroup wide"><span class="flabel">ผลิตภัณฑ์</span><div class="fchips scroll">${pr}</div></div>
+      <button class="btn sm ghost" id="fReset"${anyFilter() ? "" : " disabled"}>ล้างตัวกรอง</button>
+    </div>`;
+  }
+
+  function wireDashboard() {
+    detailEl.querySelectorAll(".seg button").forEach((b) =>
+      b.addEventListener("click", () => { dashDigest = b.dataset.digest; loadDashboard(); }));
+    const df = document.getElementById("fDateFrom"), dt = document.getElementById("fDateTo");
+    if (df) df.addEventListener("change", () => { dashFilters.date_from = df.value; loadDashboard(); });
+    if (dt) dt.addEventListener("change", () => { dashFilters.date_to = dt.value; loadDashboard(); });
+    detailEl.querySelectorAll(".fchip").forEach((c) => c.addEventListener("click", () => {
+      const set = dashFilters[c.dataset.group], v = c.dataset.value;
+      set.has(v) ? set.delete(v) : set.add(v);
+      loadDashboard();
+    }));
+    const reset = document.getElementById("fReset");
+    if (reset) reset.addEventListener("click", () => {
+      dashFilters = { date_from: "", date_to: "", statuses: new Set(), sentiments: new Set(), products: new Set() };
+      loadDashboard();
+    });
+  }
+
+  function renderDashboard() {
+    const d = dashData;
+    if (!d) return;
+    const segBtn = (v, l) => `<button class="${dashDigest === v ? "active" : ""}" data-digest="${v}">${l}</button>`;
+    const head = `<div class="dash-head"><span class="dash-title">วิเคราะห์การโทร</span><span class="seg">${segBtn("daily", "รายวัน")}${segBtn("weekly", "รายสัปดาห์")}${segBtn("monthly", "รายเดือน")}</span></div>`;
+    const filters = renderFilters(d.facets || {});
+
+    let body;
+    if (!d.totals.total) {
+      body = `<div class="dash-empty">${anyFilter() ? "ไม่พบสายที่ตรงกับตัวกรอง" : "ยังไม่มีสายที่ประมวลผล"}</div>`;
+    } else {
+      const k = d.kpis;
+      const sentItems = SENTS.filter((s) => d.sentiment[s]).map((s) => ({ label: SENT_TH[s], count: d.sentiment[s], cls: s }));
+      const toneItems = (d.tone_flags || []).map((t) => ({ label: TONE_TH[t.label] || t.label, count: t.count }));
+      const prodItems = (d.products || []).map((p) => ({ label: p.label, count: p.count, cls: p.label === OTHER_LABEL ? "other" : "" }));
+      const prodTotal = prodItems.reduce((s, p) => s + p.count, 0);
+      const otherCount = prodItems.filter((p) => p.label === OTHER_LABEL).reduce((s, p) => s + p.count, 0);
+      const bblPct = prodTotal ? Math.round((100 * (prodTotal - otherCount)) / prodTotal) : 0;
+      const kb = d.kb || { checked: 0, verdicts: {} };
+      const kbItems = ["supported", "not_found", "contradicts"]
+        .filter((v) => kb.verdicts[v])
+        .map((v) => ({ label: KB_VERDICT[v].th, count: kb.verdicts[v], cls: KB_VERDICT[v].fill }));
+      body = `
+      <div class="kpi-grid">
+        <div class="kpi"><div class="v">${d.totals.total}</div><div class="k">สายทั้งหมด</div></div>
+        <div class="kpi"><div class="v success">${d.totals.completed}</div><div class="k">วิเคราะห์แล้ว</div></div>
+        <div class="kpi"><div class="v">${fmtDur(k.avg_duration_seconds)}</div><div class="k">ระยะเวลาเฉลี่ย</div></div>
+        <div class="kpi"><div class="v">${fmtDur(k.total_duration_seconds)}</div><div class="k">เวลาสนทนารวม</div></div>
+        <div class="kpi"><div class="v danger">${k.negative_pct}%</div><div class="k">ความรู้สึกเชิงลบ</div></div>
+        <div class="kpi"><div class="v success">${k.positive_pct}%</div><div class="k">ความรู้สึกเชิงบวก</div></div>
+        <div class="kpi"><div class="v warn">${k.critical_pct}%</div><div class="k">มีประเด็นสำคัญ</div></div>
+        ${kb.checked ? `<div class="kpi"><div class="v danger">${k.kb_issue_pct}%</div><div class="k">คำพูดเสี่ยงผิด KB</div></div>` : ""}
+      </div>
+      <div class="dash-card"><h3>ปริมาณการโทร — ${escHtml(d.digest)}</h3>${barsChart(d.timeline, "total")}</div>
+      <div class="dash-card"><h3>แนวโน้มความรู้สึกลูกค้า</h3>${stackedTrend(d.sentiment_trend)}</div>
+      <div class="dash-2col">
+        <div class="dash-card"><h3>ความรู้สึกลูกค้า</h3>${hbars(sentItems)}</div>
+        <div class="dash-card"><h3>โทนเสียงลูกค้า</h3>${hbars(toneItems)}</div>
+      </div>
+      <div class="dash-2col">
+        <div class="dash-card"><h3>หัวข้อที่พบบ่อย</h3>${hbars(d.topics)}</div>
+        <div class="dash-card"><h3>ประเด็นสำคัญ</h3>${hbars(d.critical_flags)}</div>
+      </div>
+      <div class="dash-card"><h3>ผลิตภัณฑ์บัตรเครดิต <span class="dash-sub">BBL ${bblPct}% • อื่นๆ ${100 - bblPct}%</span></h3>${hbars(prodItems)}</div>
+      ${kb.checked ? `<div class="dash-card"><h3>การตรวจสอบตาม KB <span class="dash-sub">${kb.checked} สาย</span></h3>${hbars(kbItems)}</div>` : ""}
+      <div class="dash-card"><h3>ภาพรวมรายเดือน</h3>${monthlyTable(d.monthly)}</div>`;
+    }
+
+    detailEl.innerHTML = `<div class="dash">${head}${filters}${body}</div>`;
+    wireDashboard();
+  }
+
+  document.getElementById("navSessions").addEventListener("click", () => setView("sessions"));
+  document.getElementById("navDashboard").addEventListener("click", () => setView("dashboard"));
 
   loadConfig();
   loadCalls();

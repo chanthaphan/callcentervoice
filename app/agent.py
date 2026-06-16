@@ -3,9 +3,11 @@ import logging
 from pydantic import BaseModel
 
 from app.config import Settings
+from app.product_kb import OTHER, load_bbl_products, load_page_text, normalize_products
 from app.models import (
     Gender,
     JourneyMoment,
+    KbCheck,
     PersonProfile,
     PostCallAnalysis,
     Sentiment,
@@ -24,6 +26,55 @@ class _DiarizeSegment(BaseModel):
 
 class _DiarizeResult(BaseModel):
     segments: list[_DiarizeSegment]
+
+
+class _PIISpan(BaseModel):
+    text: str  # the PII substring exactly as it appears in the transcript
+    category: str  # e.g. person_name, address, birth_date, account_number, card_number
+
+
+class _PIIResult(BaseModel):
+    spans: list[_PIISpan]
+
+
+class _KbVerifyResult(BaseModel):
+    checks: list[KbCheck]
+
+
+KB_VERIFY_PROMPT = """You are a QA reviewer for a Thai bank call center.
+You are given the official product knowledge base (KB) and a call transcript.
+Examine ONLY the statements made by the bank's call-center staff/agent about the product(s).
+For each distinct factual claim the staff makes (benefits, fees, interest, conditions,
+eligibility, points, promotions, procedures), output one item with:
+- claim: the staff's claim, concisely, in Thai
+- verdict: exactly one of
+    "supported"   — the KB clearly backs the claim
+    "not_found"   — the KB does not mention this, so it cannot be confirmed
+    "contradicts" — the claim conflicts with what the KB states
+- evidence: a short Thai quote/paraphrase from the KB the verdict is based on (null if not_found)
+- product: which product the claim concerns
+Judge ONLY factual product claims by the staff — ignore greetings, identity verification,
+small talk, and anything the customer says. If the staff made no factual product claims,
+return an empty list. Write claim and evidence in Thai."""
+
+
+PII_REDACTION_PROMPT = """You are a PII detection specialist for a Thai bank call center.
+Read the transcript and return every span of personal data that should be redacted.
+
+Redact (return the verbatim substring exactly as written, including Thai text):
+- Personal names of customers or staff (ชื่อ-นามสกุล)
+- Home/mailing addresses
+- Birth dates / dates of birth (วันเกิด), in any format
+- Account numbers, card numbers, national ID numbers, reference/case numbers
+- Phone numbers and email addresses
+
+Do NOT return:
+- Monetary amounts, balances, interest rates, or generic dates that are not birth dates
+- Product names, bank/branch names, or generic job titles
+- Whole sentences — return only the minimal PII substring itself
+
+Return each detected item as it appears verbatim in the text so it can be matched
+exactly. If there is no PII, return an empty list."""
 
 
 DIARIZE_PROMPT = """You are a call center diarization specialist for a Thai bank.
@@ -83,11 +134,21 @@ customer strong signals:
 
 Tiebreaker: the party who speaks FIRST in the call and uses a service greeting is almost always call_center_staff. The party who describes a problem they are experiencing is almost always the customer.
 
-Sentiment scoring (apply these exact criteria — do not deviate):
-- customer_sentiment negative: customer uses complaint language, expresses worry/fear about their account, disputes a charge, or says they cannot use their card.
-- customer_sentiment neutral: customer asks factual questions with no emotional language; tone is matter-of-fact throughout.
-- customer_sentiment positive: customer explicitly expresses satisfaction or relief.
-- customer_sentiment mixed: clear evidence of BOTH negative and positive moments.
+Sentiment scoring — judge the customer's EMOTIONAL TONE, not the call topic. Calling about a
+problem (a lost card, a disputed charge, a question, a blocked account) is the REASON for the
+call, NOT by itself evidence of negative sentiment. Most routine service calls are neutral.
+Default to neutral and only move off it when the customer's own words clearly carry emotion.
+- customer_sentiment neutral (DEFAULT): customer reports an issue or asks questions in a calm,
+  matter-of-fact, cooperative way — even when the topic is a dispute, fraud, or a blocked card,
+  and even if they sound mildly concerned. This is the expected tone for the majority of calls.
+- customer_sentiment negative: the wording shows REAL, sustained emotional negativity —
+  clear frustration or anger, repeated impatience, panic/distress that is not quickly reassured,
+  blaming the bank, or explicit dissatisfaction with the service or outcome. A single worried
+  phrase, or simply having a serious problem, is NOT enough on its own.
+- customer_sentiment positive: customer explicitly expresses relief, gratitude, or satisfaction.
+- customer_sentiment mixed: the emotional arc clearly shifts — e.g. starts frustrated or anxious
+  and ends relieved/satisfied once the issue is handled.
+- When genuinely torn between neutral and negative, choose neutral.
 - agent_sentiment neutral: agent is calm and procedural (default for well-handled calls).
 - agent_sentiment positive: agent expresses warmth or celebrates a resolution.
 - agent_sentiment negative: agent is dismissive, curt, or unhelpful.
@@ -103,10 +164,10 @@ ToneFlag assignment (only assign if clearly evidenced in the text):
 - procedural: agent follows verification scripts, explains policy steps, or reads from a process.
 
 Highlight critical flags such as fraud, scam, unauthorized charge, chargeback, dispute, card blocking, missing refund, compliance risk, angry escalation, or repeated failed resolution.
-Classify any credit card product, network, issuer, or branded card mentioned, such as Visa, Mastercard, JCB, UnionPay, American Express, SCB, KTC, Krungsri, First Choice, or generic credit card.
+Classify credit card products into credit_card_products following the rule given in the per-call instructions (scope to the known BBL products; bucket anything else as the "other" label provided).
 
 Person profile extraction (fill every field; use null only when there is genuinely no evidence):
-- session_topic: one concise sentence capturing the core reason for this call (e.g. "Customer disputes an unrecognized charge of 2,500 baht on their Visa card").
+- session_topic: one concise Thai sentence capturing the core reason for this call (e.g. "ลูกค้าโต้แย้งรายการที่ไม่รู้จักจำนวน 2,500 บาทบนบัตรเครดิต").
 - agent_profile.name: agent's name if spoken aloud. null if not mentioned.
 - agent_profile.gender: detect from Thai gendered particles used by the agent —
     Male particles: ครับ, ค้าบ, ฮะ, ผม → "M"
@@ -165,9 +226,77 @@ class PostCallAgent:
             full_text="\n".join(f"{s.speaker}: {s.text}" for s in new_segments),
         )
 
+    def detect_pii_spans(self, transcript: TranscriptResult) -> list[str]:
+        """Return verbatim PII substrings the LLM finds (names, addresses, birth dates, …).
+
+        The caller masks these deterministically via ``mask_literal_spans`` — the LLM
+        only locates PII, it never rewrites the transcript. Returns [] for the mock
+        provider or an empty transcript.
+        """
+        provider = self.settings.llm_provider.lower()
+        if provider == "mock" or not transcript.segments:
+            return []
+        llm = self._build_llm().with_structured_output(_PIIResult)
+        numbered = "\n".join(f"[{i}] {seg.text}" for i, seg in enumerate(transcript.segments))
+        result = llm.invoke([
+            ("system", PII_REDACTION_PROMPT),
+            ("human", f"Find all PII spans in this transcript:\n\n{numbered}"),
+        ])
+        parsed = result if isinstance(result, _PIIResult) else _PIIResult.model_validate(result)
+        return [span.text for span in parsed.spans if span.text and span.text.strip()]
+
+    def verify_against_kb(self, transcript: TranscriptResult, analysis: PostCallAnalysis) -> list[KbCheck]:
+        """Check the staff's factual product claims against the product KB.
+
+        Returns [] for the mock provider, when no BBL product was discussed, or when
+        no KB page is available. Reads each discussed product's page.md as the ground
+        truth (capped to the two most relevant products to bound context/cost).
+        """
+        provider = self.settings.llm_provider.lower()
+        if provider == "mock" or not transcript.segments:
+            return []
+        bbl = [p for p in analysis.credit_card_products if p != OTHER]
+        if not bbl:
+            return []
+        blocks = []
+        for product in bbl[:2]:
+            text = load_page_text(product, self.settings.product_kb_dir)
+            if text:
+                blocks.append(f"### {product}\n{text}")
+        if not blocks:
+            return []
+        kb_context = "\n\n".join(blocks)
+        llm = self._build_llm().with_structured_output(_KbVerifyResult)
+        result = llm.invoke([
+            ("system", KB_VERIFY_PROMPT),
+            (
+                "human",
+                f"Product knowledge base:\n{kb_context}\n\nCall transcript:\n{transcript.full_text}\n\n"
+                "Return the bank staff's factual product claims, each with a verdict.",
+            ),
+        ])
+        parsed = result if isinstance(result, _KbVerifyResult) else _KbVerifyResult.model_validate(result)
+        checks: list[KbCheck] = []
+        for check in parsed.checks:
+            if not check.claim or not check.claim.strip():
+                continue
+            if not check.product and len(bbl) == 1:
+                check.product = bbl[0]
+            checks.append(check)
+        return checks
+
     def _llm_analysis(self, transcript: TranscriptResult) -> PostCallAnalysis:
         llm = self._build_llm().with_structured_output(PostCallAnalysis)
         language = self.settings.analysis_language
+        bbl_products = load_bbl_products(self.settings.product_kb_dir)
+        product_rule = (
+            "Known BBL credit-card products:\n- " + "\n- ".join(bbl_products) + "\n"
+            f"For credit_card_products, name a product ONLY if it is one of these (use its exact "
+            f"name above); if a credit card that is NOT a BBL product is mentioned (another bank, a "
+            f"bare network, or a generic card), output '{OTHER}'. Include only cards actually mentioned."
+            if bbl_products
+            else "Fill credit_card_products with product/network/issuer names mentioned."
+        )
         unique_speakers = sorted({s.speaker for s in transcript.segments})
         speakers_str = ", ".join(f'"{s}"' for s in unique_speakers)
         messages = [
@@ -182,12 +311,13 @@ class PostCallAgent:
                 "Use exactly the same label string as it appears in the transcript.\n"
                 "2. Use segment timestamps to build the emotion journeys.\n"
                 "3. Fill critical_flags with short business-critical flags.\n"
-                "4. Fill credit_card_products with product/network/issuer names mentioned.\n"
+                f"4. {product_rule}\n"
                 f"5. Return all free-text fields in {language}.",
             ),
         ]
         result = llm.invoke(messages)
         analysis = result if isinstance(result, PostCallAnalysis) else PostCallAnalysis.model_validate(result)
+        analysis.credit_card_products = normalize_products(analysis.credit_card_products, bbl_products)
         return self._align_speaker_labels(analysis, unique_speakers)
 
     def _align_speaker_labels(self, analysis: PostCallAnalysis, transcript_speakers: list[str]) -> PostCallAnalysis:

@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from app.config import Settings
 from app.models import Sentiment, ToneFlag, TranscriptResult, TranscriptSegment
+from app.redaction import redact_transcript
 from app.retry import retry_request
 
 
@@ -73,14 +74,23 @@ class TranscriptionService:
         path: Path,
         on_partial: Callable[[TranscriptResult], None] | None = None,
     ) -> TranscriptResult:
+        # Redaction is a guaranteed property of every transcript this service
+        # returns — including streamed partials — so no caller has to remember it.
+        wrapped = None
+        if on_partial is not None:
+            def wrapped(transcript: TranscriptResult) -> None:
+                on_partial(redact_transcript(transcript))
+
         provider = self.settings.transcribe_provider.lower()
         if provider == "openai_realtime":
-            return self._openai_realtime_transcribe(path, on_partial=on_partial)
-        if provider == "openai":
-            return self._openai_transcribe(path)
-        if provider == "azure_speech":
-            return self._azure_speech_transcribe(path)
-        return self._mock_transcribe(path)
+            result = self._openai_realtime_transcribe(path, on_partial=wrapped)
+        elif provider == "openai":
+            result = self._openai_transcribe(path)
+        elif provider == "azure_speech":
+            result = self._azure_speech_transcribe(path)
+        else:
+            result = self._mock_transcribe(path)
+        return redact_transcript(result)
 
     def _azure_speech_transcribe(self, path: Path) -> TranscriptResult:
         api_key = self.settings.azure_speech_api_key
