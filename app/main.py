@@ -3,6 +3,7 @@ import json
 import logging
 import mimetypes
 import secrets
+from datetime import date
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -16,8 +17,11 @@ from app.agent import PostCallAgent
 from app.audio import TranscriptionService
 from app.config import CONFIGURABLE_FIELDS, apply_overrides, get_settings
 from app.language import AzureLanguageService
+from app.models import JobStatus, Sentiment
 from app.processor import BatchProcessor
+from app.product_kb import OTHER, load_bbl_products
 from app.redaction import redact_transcript
+from app.stats import compute_stats, filter_records
 from app.storage import CallStore
 
 logger = logging.getLogger(__name__)
@@ -125,6 +129,45 @@ def patch_config(payload: ConfigPatch):
         json.dumps(current, indent=2, default=str), encoding="utf-8"
     )
     return current
+
+
+@app.get("/api/stats")
+def get_stats(
+    digest: str = "daily",
+    date_from: str | None = None,
+    date_to: str | None = None,
+    status: str | None = None,
+    sentiment: str | None = None,
+    product: str | None = None,
+):
+    kb = load_bbl_products(settings.product_kb_dir)
+
+    def _date(value: str | None):
+        try:
+            return date.fromisoformat(value) if value else None
+        except ValueError:
+            return None
+
+    def _set(value: str | None):
+        items = {v.strip() for v in (value or "").split(",") if v.strip()}
+        return items or None
+
+    filtered = filter_records(
+        store.iter_records(),
+        date_from=_date(date_from),
+        date_to=_date(date_to),
+        statuses=_set(status),
+        sentiments=_set(sentiment),
+        products=_set(product),
+        kb=kb,
+    )
+    result = compute_stats(filtered, digest=digest, kb=kb)
+    result["facets"] = {
+        "products": [*kb, OTHER],
+        "sentiments": [s.value for s in Sentiment],
+        "statuses": [s.value for s in JobStatus],
+    }
+    return result
 
 
 @app.get("/api/calls")

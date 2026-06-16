@@ -9,7 +9,7 @@ from app.audio import SUPPORTED_AUDIO_EXTENSIONS, TranscriptionService
 from app.enrichment import enrich_transcript_with_analysis
 from app.language import AzureLanguageService
 from app.models import CallRecord, JobStatus, PostCallAnalysis, ProcessingStage, TranscriptResult
-from app.redaction import redact_transcript
+from app.redaction import mask_literal_spans
 from app.storage import CallStore
 
 
@@ -112,6 +112,14 @@ class BatchProcessor:
 
                 transcript = self.transcription.transcribe(Path(record.file_path), on_partial=save_partial)
                 record.transcript = transcript
+                # The regex floor inside transcribe() has already masked numeric PII.
+                # Optionally layer LLM detection on top for context-dependent PII
+                # (names, addresses, birth dates) before any analysis sees the text.
+                if self.agent.settings.llm_pii_redaction:
+                    self._save_stage(record, ProcessingStage.transcribing, "Redacting PII")
+                    spans = self.agent.detect_pii_spans(transcript)
+                    transcript = mask_literal_spans(transcript, spans)
+                    record.transcript = transcript
                 self._save_stage(record, ProcessingStage.diarizing, "Running speaker diarization")
                 transcript = self.agent.diarize_transcript(transcript)
                 record.transcript = transcript
@@ -131,8 +139,12 @@ class BatchProcessor:
                 self._save_stage(record, ProcessingStage.enriching, "Running Azure Language enrichment")
                 transcript, analysis = self.language_service.enrich(transcript, analysis)
 
+            if self.agent.settings.kb_verification:
+                self._save_stage(record, ProcessingStage.analyzing, "Verifying staff statements against KB")
+                analysis.kb_checks = self.agent.verify_against_kb(transcript, analysis)
+
             record.analysis = analysis
-            record.transcript = redact_transcript(enrich_transcript_with_analysis(transcript, analysis))
+            record.transcript = enrich_transcript_with_analysis(transcript, analysis)
             record.status = JobStatus.complete
             record.stage = ProcessingStage.complete
             record.progress_message = "Complete"

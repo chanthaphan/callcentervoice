@@ -24,6 +24,8 @@ CONFIGURABLE_FIELDS: tuple[str, ...] = (
     "azure_language_pii_redaction",
     "azure_language_sentiment",
     "azure_language_summarization",
+    "llm_pii_redaction",
+    "kb_verification",
 )
 
 
@@ -80,7 +82,11 @@ class Settings(BaseSettings):
     realtime_partial_update_every_segments: int = Field(default=3, ge=0, le=100)
 
     llm_provider: str = "mock"
-    analysis_language: str = "English"
+    analysis_language: str = "Thai"
+    # BBL credit-card product knowledge base; analysis scopes products to these.
+    product_kb_dir: str = "data/prod_kb/Credit-Cards"
+    # Verify the staff's factual statements against the product KB (extra LLM call).
+    kb_verification: bool = False
     llm_request_timeout_seconds: int = Field(default=300, ge=30)
     openai_model: str = "gpt-4.1-mini"
     azure_openai_api_key: str | None = None
@@ -101,6 +107,11 @@ class Settings(BaseSettings):
     # Leave blank to reuse azure_openai_api_key / azure_openai_transcribe_endpoint
     azure_language_endpoint: str | None = None
     azure_language_api_key: str | None = None
+
+    # LLM-based PII redaction: after the deterministic regex floor, ask the analysis
+    # LLM to locate context-dependent PII (names, addresses, birth dates) and mask it
+    # before diarization/analysis. Uses the configured LLM provider; off by default.
+    llm_pii_redaction: bool = False
 
     # Azure AI Speech Service (TRANSCRIBE_PROVIDER=azure_speech)
     azure_speech_api_key: str | None = None

@@ -90,6 +90,19 @@ class JourneyMoment(BaseModel):
     sentiment: Sentiment = Sentiment.neutral
 
 
+class KbVerdict(str, Enum):
+    supported = "supported"   # the staff statement is backed by the product KB
+    not_found = "not_found"   # the KB does not cover this claim
+    contradicts = "contradicts"  # the claim conflicts with the KB
+
+
+class KbCheck(BaseModel):
+    claim: str                       # the staff's factual statement (Thai)
+    verdict: KbVerdict
+    evidence: str | None = None      # short supporting/conflicting KB quote
+    product: str | None = None       # the BBL product the claim was checked against
+
+
 class PostCallAnalysis(BaseModel):
     summary: str
     session_topic: str | None = None
@@ -108,6 +121,9 @@ class PostCallAnalysis(BaseModel):
     risks: list[str] = Field(default_factory=list)
     next_actions: list[str] = Field(default_factory=list)
     quality_notes: list[str] = Field(default_factory=list)
+    # KB verification — staff factual claims checked against the product KB
+    # (populated only when kb_verification is enabled).
+    kb_checks: list[KbCheck] = Field(default_factory=list)
     # Azure Language Service enrichment (populated when azure_language_enabled=true)
     azure_summary_issue: str | None = None
     azure_summary_resolution: str | None = None
