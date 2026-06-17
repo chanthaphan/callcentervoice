@@ -16,15 +16,21 @@ A FastAPI process serves a single-page UI and a REST API, and owns a `BatchProce
      ThreadPoolExecutor(max_parallel_files)        SQLite, WAL, lazy reads
                 │
    per-file pipeline (_process_one):
-   ┌──────────────┬───────────┬────────────┬──────────────┬───────────┐
-   │ transcribe   │ diarize   │ analyze    │ enrich (opt) │ redact    │
-   │ audio.py     │ agent.py  │ agent.py   │ language.py  │redaction.py│
-   │ ASR provider │ LLM       │ LLM (JSON) │ Azure Lang   │ numbers    │
-   └──────────────┴───────────┴────────────┴──────────────┴───────────┘
+   ┌─────────────────────┬───────────┬────────────┬──────────────┬──────────────┐
+   │ transcribe          │ diarize   │ analyze    │ enrich (opt) │ KB verify    │
+   │ audio.py            │ agent.py  │ agent.py   │ language.py  │ agent.py(opt)│
+   │ ASR + PII redact    │ LLM       │ LLM (JSON) │ Azure Lang   │ staff vs KB  │
+   └─────────────────────┴───────────┴────────────┴──────────────┴──────────────┘
                 │
                 ▼
    enrichment.py maps roles + sentiment onto segments → CallStore.save()
 ```
+
+PII redaction is built into `transcribe()` (numbers + email), so every transcript and
+streamed partial is masked before any later step. An optional LLM PII pass (names /
+addresses / birth dates) runs between transcribe and diarize when `LLM_PII_REDACTION` is
+set; an optional KB-verification pass runs after analysis when `KB_VERIFICATION` is set.
+See [ANALYTICS_AND_KB.md](ANALYTICS_AND_KB.md).
 
 The same view as a rendered diagram (GitHub renders Mermaid). Solid arrows are
 in-process / data flow; dashed arrows are external API calls.
@@ -43,7 +49,7 @@ flowchart TB
     BP["BatchProcessor<br/>thread pool · discovery · resumable"]
     subgraph pipe["Per-file pipeline (worker thread)"]
       direction LR
-      T["1 · Transcribe"] --> D["2 · Diarize"] --> AN["3 · Analyze"] --> EN["4 · Enrich<br/>(optional)"] --> RD["5 · Redact PII"] --> ST["6 · Store"]
+      T["1 · Transcribe<br/>+ PII redact"] --> D["2 · Diarize"] --> AN["3 · Analyze"] --> EN["4 · Enrich<br/>(optional)"] --> KBV["KB verify<br/>(optional)"] --> ST["5 · Store"]
     end
   end
 
@@ -76,10 +82,12 @@ flowchart TB
 | `app/batch.py` | Headless CLI entrypoint — builds the pipeline without uvicorn. |
 | `app/processor.py` | `BatchProcessor`: recursive discovery, dedup/skip logic, the thread pool, and the per-file pipeline. |
 | `app/audio.py` | `TranscriptionService`: `mock`, `openai`/Azure OpenAI batch, `openai_realtime`, `azure_speech`. ffmpeg transcode, >25 MB chunking, retries. |
-| `app/agent.py` | `PostCallAgent`: LLM-based diarization (assign roles) and a strict structured `PostCallAnalysis`. Provider + temperature + retry handling. |
+| `app/agent.py` | `PostCallAgent`: LLM diarization, structured `PostCallAnalysis`, optional PII span-detection, and optional KB verification of staff claims. |
 | `app/language.py` | `AzureLanguageService`: optional PII redaction, per-utterance sentiment, summarization. Best-effort. |
 | `app/enrichment.py` | Maps speaker roles + sentiment/tone onto transcript segments and applies display labels. |
-| `app/redaction.py` | Local number-PII masking (`[ปกปิด]`). |
+| `app/redaction.py` | PII masking (`[ปกปิด]`): regex floor (digit runs + email) and literal-span masking for LLM-detected PII. |
+| `app/product_kb.py` | Loads the BBL product KB and normalizes products to a canonical title or the `อื่นๆ` bucket. |
+| `app/stats.py` | Dashboard aggregation + filtering behind `GET /api/stats`. |
 | `app/retry.py` | `retry_request` — exponential backoff on transient HTTP/network errors. |
 | `app/storage.py` | `CallStore` — SQLite persistence. |
 | `app/models.py` | Pydantic models: `CallRecord`, `TranscriptResult`, `TranscriptSegment`, `PostCallAnalysis`, enums. |
@@ -90,12 +98,11 @@ flowchart TB
 
 For each file, `BatchProcessor._process_one` advances a `stage` that the UI shows live:
 
-1. **transcribing** — `TranscriptionService.transcribe()` returns `TranscriptResult` (segments with start/end/speaker/text). Files > 25 MB are chunked into 10-min segments and merged.
+1. **transcribing** — `TranscriptionService.transcribe()` returns `TranscriptResult` (segments with start/end/speaker/text) and **redacts PII inline** (digit runs + email), including streamed partials, so nothing downstream sees raw PII. Files > 25 MB are chunked into 10-min segments and merged. When `LLM_PII_REDACTION` is set, `PostCallAgent.detect_pii_spans()` then masks names/addresses/birth dates before diarization.
 2. **diarizing** — `PostCallAgent.diarize_transcript()` asks the LLM to label every segment `customer` or `call_center_staff` (reading the whole transcript, not assuming turn-taking). `azure_speech`/diarize models already provide speaker tags; this normalizes them.
-3. **analyzing** — `PostCallAgent.analyze()` uses structured output to produce `PostCallAnalysis` (summary, session topic, agent/customer profiles, sentiments, tone flags, emotion journeys, critical flags, credit-card products, risks, next actions, quality notes).
-4. **enriching** (optional) — `AzureLanguageService.enrich()` adds Azure PII redaction / sentiment / summarization if configured.
-5. **redact** — `redact_transcript()` masks numeric PII in the stored transcript.
-6. `enrichment.enrich_transcript_with_analysis()` attaches roles + per-segment sentiment, then `CallStore.save()`.
+3. **analyzing** — `PostCallAgent.analyze()` uses structured output to produce `PostCallAnalysis` (summary, session topic, profiles, sentiments, tone flags, emotion journeys, critical flags, risks, next actions, quality notes). Credit-card products are **scoped to the BBL KB** (`product_kb.normalize_products`; non-BBL → `อื่นๆ`). Free-text fields are produced in `ANALYSIS_LANGUAGE` (default Thai).
+4. **enriching** (optional) — `AzureLanguageService.enrich()` adds Azure PII redaction / sentiment / summarization if configured. When `KB_VERIFICATION` is set, `PostCallAgent.verify_against_kb()` then checks the staff's factual claims against the product KB page (`supported` / `not_found` / `contradicts`).
+5. `enrichment.enrich_transcript_with_analysis()` attaches roles + per-segment sentiment, then `CallStore.save()`.
 
 A failure at any stage sets `status=failed` with the error message; the file can be retried (re-run is idempotent).
 

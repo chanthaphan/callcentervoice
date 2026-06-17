@@ -10,7 +10,9 @@ Built for a Thai bank's call-center QA, but provider-agnostic and language-agnos
 - **LLM analysis** — `mock`, OpenAI, Azure OpenAI, or Anthropic. Produces a strict structured report and assigns speaker roles (customer vs. call-center staff), even for named speakers.
 - **Two ways to run** — a browser UI for review, and a **headless batch CLI** for unattended bulk processing (designed for 10k+ files).
 - **Recursive discovery** — scans nested folders (e.g. date folders `voice/2026-05-01/…`) and keeps the subpath in the display name.
-- **PII redaction** — masks ID/phone/card numbers in stored transcripts; optional Azure AI Language enrichment adds name-level PII redaction, per-utterance sentiment, and summarization.
+- **Layered PII redaction** — a deterministic regex floor masks ID/phone/card numbers **and emails** inside transcription (before any analysis); an optional LLM layer adds name/address/birth-date masking; optional Azure AI Language adds another PII pass plus per-utterance sentiment and summarization.
+- **KB-scoped products + verification** — credit-card products are scoped to a Bangkok Bank product knowledge base (non-BBL cards bucket to `อื่นๆ`), and an optional check verifies the **staff's factual claims against the product KB** (ตรงตาม / ไม่พบใน / ขัดแย้งกับ KB).
+- **Analytics dashboard** — a filterable dashboard (date range, sentiment, product, status) with call-volume, sentiment trend, top topics/flags, BBL-vs-Other products, and a monthly overview — self-contained SVG/CSS, works offline.
 - **Resilient & scalable** — SQLite store (no full in-memory load), exponential-backoff retries on throttling/timeouts, resumable processing, configurable concurrency.
 - **Runtime config** — change providers/models/options from the Settings panel (or `PATCH /api/config`) without editing files.
 
@@ -60,11 +62,11 @@ It reuses the same config and store as the web app, logs progress + a final tall
 ## How it works
 
 ```
-audio file ─▶ transcribe ─▶ diarize ─▶ analyze ─▶ [Azure Language] ─▶ redact PII ─▶ store
-              (ASR)         (LLM)      (LLM, structured)  (optional)   (numbers)    (SQLite)
+audio ─▶ transcribe(+PII redact) ─▶ [LLM PII] ─▶ diarize ─▶ analyze ─▶ [Azure Lang] ─▶ [KB verify] ─▶ enrich ─▶ store
+         ASR, masks numbers/email   names/etc.   (LLM)      (structured)  (optional)    (optional)              (SQLite)
 ```
 
-Each file flows through stages `queued → transcribing → diarizing → analyzing → enriching → complete` (or `failed`). The `BatchProcessor` runs files concurrently in a thread pool. Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Redaction is built into transcription, so PII is masked **before** any analysis sees it. Each file flows through stages `queued → transcribing → diarizing → analyzing → enriching → complete` (or `failed`). The `BatchProcessor` runs files concurrently in a thread pool. Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); analytics, product-KB scoping, and verification: [docs/ANALYTICS_AND_KB.md](docs/ANALYTICS_AND_KB.md).
 
 ## Configuration
 
@@ -80,6 +82,9 @@ The most common knobs:
 | `MAX_PARALLEL_FILES` | `3` | Concurrent jobs (1–16) |
 | `AUTO_PROCESS_ON_START` | `true` | Auto-process discovered files; if `false`, files appear as *pending* until started |
 | `ANALYSIS_LANGUAGE` | `Thai` | Language for free-text output |
+| `LLM_PII_REDACTION` | `false` | LLM masking of names/addresses/birth dates (in addition to the regex floor) |
+| `KB_VERIFICATION` | `false` | Verify staff statements against the product KB |
+| `PRODUCT_KB_DIR` | `data/prod_kb/Credit-Cards` | BBL product knowledge base directory |
 | `APP_API_KEY` | — | Optional shared secret guarding `/api/*` (see Security) |
 
 **Full reference for every variable** (server, transcription, Azure Speech, LLM, Azure Language): **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**.
@@ -93,9 +98,14 @@ The most common knobs:
 
 > Note: `gpt-4o-transcribe`/`-mini-transcribe` return a single text block (no timestamps), so speaker separation is weak — prefer `whisper-1`, `gpt-4o-transcribe-diarize`, or `azure_speech` for diarized calls.
 
-### PII redaction
+### PII redaction, products & analytics
 
-Local redaction always masks 9+ digit runs (Thai national IDs, phone, card/account numbers → `[ปกปิด]`) in stored transcripts. For **name-level** PII plus per-utterance sentiment and summarization, enable Azure AI Language (`AZURE_LANGUAGE_ENABLED=true` + a Language resource). Details in [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+- **PII redaction** is layered: a deterministic regex floor (9+ digit runs → IDs/phone/card, plus emails → `[ปกปิด]`) runs *inside* transcription, before any analysis. Set `LLM_PII_REDACTION=true` to add an LLM pass for names/addresses/birth dates, or `AZURE_LANGUAGE_ENABLED=true` for Azure's PII pass + per-utterance sentiment + summarization.
+- **Products** are scoped to the Bangkok Bank product KB under `PRODUCT_KB_DIR`; non-BBL cards bucket to `อื่นๆ`.
+- **KB verification** (`KB_VERIFICATION=true`) checks the staff's factual claims against the product KB page.
+- **Dashboard**: a filterable analytics view (open via **Dashboard** in the header).
+
+Full details: **[docs/ANALYTICS_AND_KB.md](docs/ANALYTICS_AND_KB.md)**.
 
 ## API
 
@@ -103,6 +113,7 @@ Summary below; full reference with examples: **[docs/API.md](docs/API.md)**.
 
 | Method | Path | Description |
 |---|---|---|
+| `GET` | `/api/stats?digest&date_from&date_to&status&sentiment&product` | Aggregated dashboard analytics (filterable) — see [docs/ANALYTICS_AND_KB.md](docs/ANALYTICS_AND_KB.md) |
 | `GET` | `/api/calls?limit&offset&status` | Paginated list of lightweight summaries `{items, total, …}` |
 | `GET` | `/api/calls/{id}` | One full record (transcript + analysis) |
 | `GET` | `/api/calls/{id}/audio` | Stream the original audio |
@@ -133,13 +144,15 @@ app/
   agent.py       PostCallAgent — LLM diarization + structured analysis
   language.py    AzureLanguageService — optional enrichment
   enrichment.py  Maps roles/sentiment onto transcript segments
-  redaction.py   Local number-PII masking
+  redaction.py   PII masking — regex floor + literal-span masking
+  product_kb.py  BBL product KB loader + product normalization
+  stats.py       Dashboard aggregation + filtering
   retry.py       Exponential-backoff helper
   storage.py     SQLite CallStore
   models.py      Pydantic models
   config.py      Settings + runtime override handling
-  static/index.html   Single-file browser UI
-docs/            Architecture, configuration, API, and batch guides
+  static/index.html   Single-file browser UI (sessions + dashboard)
+docs/            Architecture, configuration, API, batch, analytics & KB guides
 tests/           Pytest suite
 ```
 
